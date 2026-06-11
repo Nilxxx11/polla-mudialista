@@ -366,6 +366,63 @@ body {
   display: flex; gap: 0.5rem;
 }
 
+/* ─── ADMIN USER LIST ─── */
+.admin-users-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.admin-users-table th {
+  text-align: left; padding: 0.5rem 0.75rem;
+  font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-sub); font-weight: 700; border-bottom: 1px solid var(--border-subtle);
+}
+.admin-users-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+.admin-users-table tr:hover td { background: rgba(255,255,255,0.02); }
+.admin-users-table .inactive-row td { opacity: 0.55; }
+.badge-activo {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.badge-activo.yes { background: rgba(39,174,96,0.15); color: var(--green); border: 1px solid rgba(39,174,96,0.2); }
+.badge-activo.no { background: rgba(231,76,60,0.1); color: var(--red); border: 1px solid rgba(231,76,60,0.15); }
+.toggle-switch {
+  position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; inset: 0; background: rgba(255,255,255,0.15);
+  border-radius: 20px; transition: 0.2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute; left: 2px; bottom: 2px;
+  width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--green); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+.toggle-switch input:disabled + .toggle-slider { opacity: 0.3; cursor: not-allowed; }
+
+/* ─── POINTS INFO ─── */
+.btn-points-info {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.4rem 0.75rem; cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif; font-size: 0.7rem;
+  font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--text-sub); transition: all 0.2s;
+  white-space: nowrap;
+}
+.btn-points-info:hover { border-color: var(--gold); color: var(--gold); }
+.points-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.points-table th, .points-table td {
+  padding: 0.6rem 0.75rem; text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.82rem;
+}
+.points-table th { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-sub); font-weight: 700; }
+.points-table tr:last-child td { border-bottom: none; }
+.points-icon { font-size: 1.2rem; margin-right: 0.5rem; }
+.pts-badge {
+  display: inline-block; background: var(--gold-pale); color: var(--gold);
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 800;
+  padding: 1px 8px; border-radius: 6px; font-size: 0.9rem;
+}
+
 .login-trophy {
   font-size: 4rem;
   margin-bottom: 0.75rem;
@@ -952,6 +1009,43 @@ body {
 </div>
 
 <!-- ═══════════════════════════════════════════════════════
+     POINTS INFO MODAL
+     ═══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="pointsModal">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-title">🏆 Sistema de Puntos</div>
+    <div class="modal-body" style="text-align:left">
+      <p style="margin-bottom:1rem;color:var(--text-sub);font-size:0.85rem">
+        Gana puntos pronosticando los resultados de cada partido del Mundial 2026.
+      </p>
+      <table class="points-table">
+        <tr>
+          <td><span class="points-icon">🎯</span></td>
+          <td><strong>Resultado Exacto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Aciertas el marcador exacto</span></td>
+          <td style="text-align:right"><span class="pts-badge">+3 pts</span></td>
+        </tr>
+        <tr>
+          <td><span class="points-icon">✅</span></td>
+          <td><strong>Ganador o Empate Correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Aciertas quién gana o que empatan</span></td>
+          <td style="text-align:right"><span class="pts-badge">+1 pt</span></td>
+        </tr>
+        <tr>
+          <td><span class="points-icon">❌</span></td>
+          <td><strong>Sin Acierto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste ni ganador ni marcador</span></td>
+          <td style="text-align:right"><span class="pts-badge">0 pts</span></td>
+        </tr>
+      </table>
+      <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
+        💡 Los pronósticos se bloquean cuando el partido inicia. ¡No olvides pronosticar antes!
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closePointsModal()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
      LOGIN SCREEN — VehiGol!
      ═══════════════════════════════════════════════════════ -->
 <div id="loginScreen">
@@ -1049,6 +1143,7 @@ body {
         <button class="nav-tab admin-tab hidden" data-page="admin" id="adminTab" onclick="navigate('admin',this)">⚙️ Admin</button>
       </nav>
       <div class="header-actions">
+        <button class="btn-points-info" onclick="showPointsInfo()" title="Cómo se ganan puntos">🏆 Puntos</button>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Cambiar tema">🌙</button>
         <div class="user-chip" id="userChip" style="display:none">
           <img class="user-avatar" id="userAvatar" src="" alt="" style="display:none">
@@ -1163,6 +1258,10 @@ body {
           <div class="admin-card-title"><span>👥</span> Resumen Participantes</div>
           <div id="adminParticipantsInfo" style="font-size:0.85rem;color:var(--text-sub)">Cargando...</div>
         </div>
+        <div class="admin-card" style="grid-column:1/-1">
+          <div class="admin-card-title"><span>🔑</span> Gestión de Usuarios</div>
+          <div id="adminUsersList" style="font-size:0.85rem;">Cargando...</div>
+        </div>
       </div>
       <div class="admin-card">
         <div class="admin-card-title"><span>📋</span> Todos los Pronósticos</div>
@@ -1234,7 +1333,8 @@ const API_CONFIG = {
    ───────────────────────────────────────────── */
 const ADMIN_EMAILS = [
   "neil.pereira.robles@gmail.com",
-  "jefe@vehidiesel.com"
+  "jefe@vehidiesel.com",
+  "c.payares90@gmail.com"
   /* Agrega más emails admin aquí */
 ];
 
@@ -1242,8 +1342,8 @@ const ADMIN_EMAILS = [
    SISTEMA DE PUNTUACIÓN
    ───────────────────────────────────────────── */
 const SCORING = {
-  EXACT_SCORE: 3,   // Resultado exacto
-  CORRECT_WINNER: 1 // Solo ganador / empate correcto
+  EXACT_SCORE: 5,   // Resultado exacto
+  CORRECT_WINNER: 2 // Solo ganador / empate correcto
 };
 
 /* ══════════════════════════════════════════════
@@ -1257,6 +1357,7 @@ let allUsers     = {};
 let currentFilter= 'all';
 let refreshTimer = null;
 let isAdmin      = false;
+let isActivo     = false;
 
 /* ══════════════════════════════════════════════
    INIT FIREBASE
@@ -1354,6 +1455,7 @@ async function registerWithEmail() {
     if (db) {
       await db.ref(`users/${sanitizeKey(email)}`).set({
         name, email, photoURL: '',
+        activo: false,
         lastLogin: new Date().toISOString()
       });
     }
@@ -1388,6 +1490,7 @@ function showLogin() {
   const l = document.getElementById('adminStatLink');
   if (l) l.style.display = 'none';
   isAdmin = false;
+  isActivo = false;
   /* Reset auth forms to login tab */
   showAuthForm('login', document.querySelector('[data-auth="login"]'));
   document.getElementById('loginEmail').value = '';
@@ -1438,14 +1541,21 @@ async function onUserLoggedIn(user) {
         lastLogin: new Date().toISOString(),
         photoURL: user.photoURL || existing.photoURL || ''
       };
-      /* Only set name if available from auth provider, otherwise keep existing */
       if (user.displayName) profile.name = user.displayName;
       else if (existing.name) profile.name = existing.name;
       else profile.name = user.email.split('@')[0];
+      /* Preserve activo from existing, default false for new users */
+      profile.activo = existing.activo === undefined ? false : existing.activo;
       await db.ref(`users/${emailKey}`).update(profile);
+      isActivo = profile.activo;
     } catch (e) {
       console.warn("Error guardando perfil:", e.message);
     }
+  }
+
+  /* If user not active, show toast */
+  if (!isActivo) {
+    toast('⏳ Tu cuenta está pendiente de activación por un administrador', 'info');
   }
 
   /* Cargar datos */
@@ -1696,10 +1806,10 @@ function renderMatchCard(m, idx) {
           <span>${isLocked ? '🔒 Cerrado' : (pron ? '✏️ Editar pronóstico' : '💾 Ingresa tu pronóstico')}</span>
         </div>
         <div class="pronostico-actions-row">
-          <button class="btn-save" ${isLocked ? 'disabled' : ''} onclick="savePronostico('${m.id}')">
+          <button class="btn-save" ${isLocked || !isActivo ? 'disabled' : ''} onclick="savePronostico('${m.id}')">
             ${pron ? '✏️ Editar' : '💾 Guardar'}
           </button>
-          ${feedbackHTML}
+          ${!isActivo ? '<span style="font-size:0.7rem;color:var(--orange);flex:1">🔒 Cuenta inactiva</span>' : feedbackHTML}
         </div>
       </div>` : `<div class="pronostico-section"><div class="pronostico-label" style="opacity:0.4">Equipos por confirmar</div></div>`}
     </div>`;
@@ -1710,6 +1820,7 @@ function renderMatchCard(m, idx) {
    ══════════════════════════════════════════════ */
 async function savePronostico(matchId) {
   if (!currentUser) { toast("Debes iniciar sesión", "error"); return; }
+  if (!isActivo) { toast("🔒 Tu cuenta no está activada. Espera a que un administrador la active.", "error"); return; }
 
   const m = allMatches.find(x => x.id === matchId);
   if (!m || isMatchLocked(m)) { toast("Este partido ya está cerrado", "error"); return; }
@@ -1750,6 +1861,18 @@ function listenToPronosticos() {
 function listenToLeaderboard() {
   db.ref('users').on('value', usersSnap => {
     allUsers = usersSnap.val() || {};
+    /* Update isActivo in real-time if admin toggles current user */
+    if (currentUser) {
+      const myData = allUsers[sanitizeKey(currentUser.email)];
+      if (myData && myData.activo !== undefined) {
+        const was = isActivo;
+        isActivo = myData.activo === true;
+        if (was !== isActivo) {
+          renderMatches();
+          toast(isActivo ? '✅ Tu cuenta ha sido activada. ¡Ya puedes pronosticar!' : '🔒 Tu cuenta ha sido desactivada.', isActivo ? 'success' : 'error');
+        }
+      }
+    }
   });
 
   db.ref('pronosticos').on('value', snap => {
@@ -2017,8 +2140,73 @@ function renderAdminPage() {
         }
       }
       document.getElementById('adminTableBody').innerHTML = rows || `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">Sin pronósticos aún</td></tr>`;
+      /* Load user management */
+      loadAdminUsers();
     });
   });
+}
+
+/* ══════════════════════════════════════════════
+   PUNTOS INFO MODAL
+   ══════════════════════════════════════════════ */
+function showPointsInfo() {
+  document.getElementById('pointsModal').classList.add('active');
+}
+function closePointsModal() {
+  document.getElementById('pointsModal').classList.remove('active');
+}
+document.getElementById('pointsModal').onclick = e => { if (e.target === e.currentTarget) closePointsModal(); };
+
+/* ─── ADMIN: User Activation ─── */
+function loadAdminUsers() {
+  if (!db) { document.getElementById('adminUsersList').textContent = 'Firebase no disponible'; return; }
+  db.ref('users').once('value', snap => {
+    const users = snap.val() || {};
+    const entries = Object.entries(users);
+    if (!entries.length) {
+      document.getElementById('adminUsersList').innerHTML = '<div style="padding:1rem;color:var(--text-sub)">No hay usuarios registrados</div>';
+      return;
+    }
+    let html = `<table class="admin-users-table">
+      <thead><tr>
+        <th>Nombre</th><th>Correo</th><th>Registro</th><th>Estado</th><th>Acción</th>
+      </tr></thead><tbody>`;
+    for (const [emailKey, u] of entries) {
+      const active = u.activo === true;
+      const regDate = u.lastLogin ? u.lastLogin.substring(0,10) : '—';
+      const email = u.email || emailKey.replace(/,/g,'.').replace(/_at_/g,'@');
+      html += `<tr class="${active?'':'inactive-row'}">
+        <td><strong>${escHtml(u.name || email)}</strong></td>
+        <td style="color:var(--text-sub);font-size:0.75rem">${escHtml(email)}</td>
+        <td style="color:var(--text-sub);font-size:0.75rem">${regDate}</td>
+        <td><span class="badge-activo ${active?'yes':'no'}">${active?'Activo':'Inactivo'}</span></td>
+        <td>
+          <label class="toggle-switch">
+            <input type="checkbox" ${active?'checked':''} onchange="toggleActivo('${emailKey}', this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('adminUsersList').innerHTML = html;
+  });
+}
+
+async function toggleActivo(emailKey, activo) {
+  try {
+    await db.ref(`users/${emailKey}/activo`).set(activo);
+    toast(`Usuario ${activo?'activado':'desactivado'} correctamente`, 'success');
+    /* Also update the allUsers cache */
+    if (allUsers[emailKey]) allUsers[emailKey].activo = activo;
+    /* If this is the current user, update isActivo */
+    if (currentUser && sanitizeKey(currentUser.email) === emailKey) {
+      isActivo = activo;
+      renderMatches();
+    }
+  } catch (e) {
+    toast('Error al actualizar: ' + e.message, 'error');
+  }
 }
 
 /* ══════════════════════════════════════════════
