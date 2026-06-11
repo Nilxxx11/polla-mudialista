@@ -1487,6 +1487,7 @@ function showAuthForm(form, btn) {
 }
 
 async function loginWithEmail() {
+  if (!auth) { toast("Firebase no disponible", "error"); return; }
   const email = document.getElementById('loginEmail').value.trim();
   const pass  = document.getElementById('loginPassword').value;
   const error = document.getElementById('loginError');
@@ -1511,6 +1512,7 @@ async function loginWithEmail() {
 }
 
 async function registerWithEmail() {
+  if (!auth) { toast("Firebase no disponible", "error"); return; }
   const name    = document.getElementById('regName').value.trim();
   const email   = document.getElementById('regEmail').value.trim();
   const pass    = document.getElementById('regPassword').value;
@@ -1548,6 +1550,13 @@ async function registerWithEmail() {
 
 async function logout() {
   try {
+    /* Detach all Firebase listeners to prevent memory leaks */
+    if (db) {
+      db.ref('matches').off();
+      db.ref('users').off();
+      db.ref('pronosticos').off();
+      if (currentUser) db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).off();
+    }
     await auth.signOut();
   } catch(e) { showLogin(); }
 }
@@ -1607,11 +1616,13 @@ async function onUserLoggedIn(user) {
     toast('Sesión iniciada como: ' + user.email, 'info');
   }
 
-  /* Guardar perfil en Firebase (con try/catch para no bloquear) */
+  /* Guardar perfil en Firebase y leer activo directamente */
   if (db) {
     try {
       const emailKey = sanitizeKey(user.email);
-      const existing = allUsers[emailKey] || {};
+      /* Leer el perfil actual desde Firebase para obtener el valor real de activo */
+      const snap = await db.ref(`users/${emailKey}`).once('value');
+      const existing = snap.val() || {};
       const profile = {
         email:    user.email,
         lastLogin: new Date().toISOString(),
@@ -1620,7 +1631,6 @@ async function onUserLoggedIn(user) {
       if (user.displayName) profile.name = user.displayName;
       else if (existing.name) profile.name = existing.name;
       else profile.name = user.email.split('@')[0];
-      /* Preserve activo from existing, default false for new users */
       profile.activo = existing.activo === undefined ? false : existing.activo;
       await db.ref(`users/${emailKey}`).update(profile);
       isActivo = profile.activo;
@@ -1630,7 +1640,7 @@ async function onUserLoggedIn(user) {
   }
 
   /* If user not active, show toast */
-  if (!isActivo) {
+  if (db && !isActivo) {
     toast('⏳ Tu cuenta está pendiente de activación por un administrador', 'info');
   }
 
@@ -1698,30 +1708,27 @@ async function loadMatches() {
 
 function listenToMatches() {
   if (!db) return;
-  db.ref('matches').on('value', async snap => {
-    const fbData = snap.val();
-    if (fbData && fbData.data && Array.isArray(fbData.data)) {
-      /* Ensure each match has a score object to avoid rendering errors */
-      allMatches = fbData.data.map(m => ({
-        ...m,
-        score: m.score || { home: null, away: null }
-      }));
-      cacheMatches();
-      const updated = fbData.updated || '';
-      setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
-      renderMatches();
-      renderPhaseTabs();
-      recalcAllPoints();
-    } else if (!allMatches.length) {
-      /* No hay datos en Firebase, traer de API y guardar */
-      try {
-        const fresh = await fetchFromAPI();
-        if (fresh.length) {
-          await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
-        }
-      } catch(e) {
-        toast("Error cargando partidos.", "error");
+  db.ref('matches').on('value', snap => {
+    try {
+      const fbData = snap.val();
+      if (fbData && fbData.data && Array.isArray(fbData.data)) {
+        allMatches = fbData.data.map(m => ({
+          ...m,
+          score: m.score || { home: null, away: null }
+        }));
+        cacheMatches();
+        const updated = fbData.updated || '';
+        setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
+        renderMatches();
+        renderPhaseTabs();
+        recalcAllPoints();
+      } else if (!allMatches.length) {
+        fetchFromAPI().then(fresh => {
+          if (fresh.length) db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+        }).catch(() => toast("Error cargando partidos.", "error"));
       }
+    } catch(e) {
+      console.warn("Error en listener de partidos:", e.message);
     }
   });
 }
@@ -1922,14 +1929,14 @@ function renderMatchCard(m, idx) {
   return `
     <div class="match-card ${statusClass}" style="animation-delay:${delay}ms">
       <div class="match-meta">
-        <span class="match-group">${m.phase}</span>
+        <span class="match-group">${escHtml(m.phase)}</span>
         <span class="match-date">${dateStr}</span>
         <span class="match-status-badge ${badgeClass}">${badgeText}</span>
       </div>
       <div class="match-teams">
         <div class="team-side">
           <span class="team-flag">${m.homeFlag}</span>
-          <div class="team-name">${m.homeTeam}</div>
+          <div class="team-name">${escHtml(m.homeTeam)}</div>
           ${!m.tbd ? `<div class="team-input-wrap">
             <input ${inputAttrs} id="hInput_${m.id}" value="${pron ? pron.golesA : ''}">
           </div>` : ''}
@@ -1939,7 +1946,7 @@ function renderMatchCard(m, idx) {
         </div>
         <div class="team-side">
           <span class="team-flag">${m.awayFlag}</span>
-          <div class="team-name">${m.awayTeam}</div>
+          <div class="team-name">${escHtml(m.awayTeam)}</div>
           ${!m.tbd ? `<div class="team-input-wrap">
             <input ${inputAttrs} id="aInput_${m.id}" value="${pron ? pron.golesB : ''}">
           </div>` : ''}
@@ -1951,7 +1958,7 @@ function renderMatchCard(m, idx) {
           <span>${isLocked ? '🔒 Cerrado' : (pron ? '✏️ Editar pronóstico' : '💾 Ingresa tu pronóstico')}</span>
         </div>
         <div class="pronostico-actions-row">
-          <button class="btn-save" ${isLocked || !isActivo ? 'disabled' : ''} onclick="savePronostico('${m.id}')">
+          <button class="btn-save" ${isLocked || !isActivo ? 'disabled' : ''} onclick="savePronostico('${escHtml(m.id).replace(/'/g,"\\'")}')">
             ${pron ? '✏️ Editar' : '💾 Guardar'}
           </button>
           ${!isActivo ? '<span style="font-size:0.7rem;color:var(--orange);flex:1">🔒 Cuenta inactiva</span>' : feedbackHTML}
@@ -2004,6 +2011,7 @@ function listenToPronosticos() {
    LEADERBOARD — FIREBASE
    ══════════════════════════════════════════════ */
 function listenToLeaderboard() {
+  if (!db) return;
   db.ref('users').on('value', usersSnap => {
     allUsers = usersSnap.val() || {};
     /* Update isActivo in real-time if admin toggles current user */
@@ -2226,9 +2234,10 @@ function adminConfirmReset() {
 function adminExportCSV() {
   if (!db) { toast("Firebase no configurado", "error"); return; }
   db.ref('users').once('value', usersSnap => {
-    Object.assign(allUsers, usersSnap.val() || {});
+    allUsers = usersSnap.val() || {};
   }).then(() => {
     db.ref('pronosticos').once('value', snap => {
+
       const allProns = snap.val() || {};
       let rows = [['Usuario','Partido','Local','Visitante','Pronóstico','Resultado','Puntos','Fecha']];
       for (const [emailKey, prons] of Object.entries(allProns)) {
@@ -2260,7 +2269,7 @@ function renderAdminPage() {
     return;
   }
   db.ref('users').once('value', usersSnap => {
-    Object.assign(allUsers, usersSnap.val() || {});
+    allUsers = usersSnap.val() || {};
   }).then(() => {
     db.ref('pronosticos').once('value', snap => {
       const allProns = snap.val() || {};
@@ -2363,8 +2372,9 @@ async function toggleActivo(emailKey, activo) {
    PUNTUACIÓN
    ══════════════════════════════════════════════ */
 function calcPoints(pron, score) {
-  if (!pron || score.home===null || score.away===null) return 0;
+  if (!pron || !score || score.home===null || score.away===null) return 0;
   const gA = parseInt(pron.golesA), gB = parseInt(pron.golesB);
+  if (isNaN(gA) || isNaN(gB)) return 0;
   const rA = score.home, rB = score.away;
   if (gA === rA && gB === rB) return SCORING.EXACT_SCORE;
   const predWin = gA>gB?'H':gA<gB?'A':'D';
@@ -2489,7 +2499,7 @@ function navigate(page, btn) {
   document.getElementById(`page-${page}`).classList.add('active');
   if (btn) btn.classList.add('active');
 
-  if (page === 'leaderboard') {
+  if (page === 'leaderboard' && db) {
     db.ref('pronosticos').once('value', snap=>{ renderLeaderboard(buildRanking(snap.val()||{})); });
   }
   if (page === 'stats')  renderStatsPage();
