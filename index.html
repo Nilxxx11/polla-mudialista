@@ -423,6 +423,26 @@ body {
   padding: 1px 8px; border-radius: 6px; font-size: 0.9rem;
 }
 
+/* ─── PHASE TABS ─── */
+.phase-tabs-row {
+  display: flex; flex-wrap: wrap; gap: 0.35rem;
+  margin-bottom: 1rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto; scrollbar-width: none;
+}
+.phase-tabs-row::-webkit-scrollbar { display: none; }
+.phase-tab {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+  background: transparent; cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 600; font-size: 0.75rem; letter-spacing: 0.3px;
+  text-transform: uppercase; white-space: nowrap;
+  color: var(--text-sub); transition: all 0.2s;
+}
+.phase-tab:hover { border-color: var(--gold); color: var(--gold); }
+.phase-tab.active { background: var(--gold); border-color: var(--gold); color: var(--navy); }
+
 .login-trophy {
   font-size: 4rem;
   margin-bottom: 0.75rem;
@@ -597,6 +617,11 @@ body {
 .match-card.status-live::before { background: linear-gradient(90deg, var(--green), #2ecc71, var(--green)); animation: shimmer 2s linear infinite; }
 .match-card.status-finished::before { background: linear-gradient(90deg, var(--navy-mid), var(--navy-light)); }
 .match-card.status-scheduled::before { background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+.match-card.status-today {
+  border-color: rgba(255,107,53,0.4);
+  box-shadow: 0 0 20px rgba(255,107,53,0.15), inset 0 0 0 1px rgba(255,107,53,0.08);
+}
+.match-card.status-today::before { background: linear-gradient(90deg, #FF6B35, #FF8C42, #FF6B35); animation: shimmer 1.5s linear infinite; }
 
 @keyframes shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
 
@@ -618,6 +643,7 @@ body {
   font-family: 'Barlow Condensed', sans-serif;
 }
 .badge-scheduled { background: rgba(79,195,247,0.1); color: var(--gold); border: 1px solid rgba(79,195,247,0.2); }
+.badge-today { background: rgba(255,107,53,0.2); color: #FF8C42; border: 1px solid rgba(255,107,53,0.4); animation: pulse 1.5s infinite; }
 .badge-live { background: rgba(39,174,96,0.15); color: var(--green); border: 1px solid rgba(39,174,96,0.3); animation: pulse 1.5s infinite; }
 .badge-finished { background: rgba(255,255,255,0.05); color: var(--text-sub); border: 1px solid var(--border-subtle); }
 .badge-tbd { background: rgba(100,100,100,0.1); color: var(--text-sub); border: 1px solid var(--border-subtle); }
@@ -1200,6 +1226,7 @@ body {
         <button class="filter-chip" data-filter="my" onclick="filterMatches('my',this)">Mis pronósticos</button>
         <input class="search-input" type="text" id="searchInput" placeholder="🔍 Buscar equipo..." oninput="filterMatches(currentFilter, null)">
       </div>
+      <div class="phase-tabs-row" id="phaseTabs"></div>
       <div class="matches-grid" id="matchesGrid">
         <div class="loading-wrap">
           <div class="spinner"></div>
@@ -1355,6 +1382,7 @@ let allMatches   = [];
 let myPronosticos= {};
 let allUsers     = {};
 let currentFilter= 'all';
+let currentPhase = 'all';
 let refreshTimer = null;
 let isAdmin      = false;
 let isActivo     = false;
@@ -1601,6 +1629,7 @@ async function loadMatches() {
   if (cached && age < API_CONFIG.REFRESH_INTERVAL) {
     allMatches = JSON.parse(cached);
     renderMatches();
+    renderPhaseTabs();
     setSyncStatus("Datos en caché • " + timeAgo(parseInt(ts)));
     return;
   }
@@ -1621,6 +1650,7 @@ async function loadMatches() {
     }
   }
   renderMatches();
+  renderPhaseTabs();
 }
 
 async function refreshResults() {
@@ -1636,6 +1666,7 @@ async function refreshResults() {
   }
 
   renderMatches();
+  renderPhaseTabs();
   recalcAllPoints();
   setSyncStatus("Actualizado • " + new Date().toLocaleTimeString('es-CO'));
   document.getElementById('syncDot').style.background = '#27AE60';
@@ -1706,6 +1737,10 @@ function renderMatches() {
     return true;
   });
 
+  if (currentPhase !== 'all') {
+    filtered = filtered.filter(m => m.phase === currentPhase);
+  }
+
   if (search) {
     filtered = filtered.filter(m =>
       m.homeTeam.toLowerCase().includes(search) ||
@@ -1735,15 +1770,48 @@ function renderMatches() {
   grid.innerHTML = html;
 }
 
+function renderPhaseTabs() {
+  const container = document.getElementById('phaseTabs');
+  const phases = [...new Set(allMatches.map(m => m.phase))].sort((a, b) => {
+    const order = ['Grupo A','Grupo B','Grupo C','Grupo D','Grupo E','Grupo F','Grupo G','Grupo H',
+      'Grupo I','Grupo J','Grupo K','Grupo L','Treintaidosavos','Octavos de Final',
+      'Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+  let html = `<button class="phase-tab ${currentPhase==='all'?'active':''}" data-phase="all" onclick="filterByPhase(this)">Todos</button>`;
+  phases.forEach(p => {
+    html += `<button class="phase-tab ${currentPhase===p?'active':''}" data-phase="${escHtml(p)}" onclick="filterByPhase(this)">${p}</button>`;
+  });
+  container.innerHTML = html;
+}
+
+function filterByPhase(btn) {
+  currentPhase = btn.dataset.phase;
+  document.querySelectorAll('.phase-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  renderMatches();
+}
+
+function isMatchToday(m) {
+  if (m.tbd) return false;
+  const matchLocal = new Date(m.utcDate).toLocaleDateString('es-CO');
+  const todayLocal = new Date().toLocaleDateString('es-CO');
+  return matchLocal === todayLocal;
+}
+
 function renderMatchCard(m, idx) {
   const isLocked = isMatchLocked(m);
   const pron     = myPronosticos[m.id];
-  const statusClass = m.status === 'IN_PLAY' ? 'status-live' :
+  const today    = isMatchToday(m);
+  const statusClass = today ? 'status-today' :
+                      m.status === 'IN_PLAY' ? 'status-live' :
                       m.status === 'FINISHED' ? 'status-finished' : 'status-scheduled';
-  const badgeClass  = m.status === 'IN_PLAY' ? 'badge-live' :
+  const badgeClass  = today ? 'badge-today' :
+                      m.status === 'IN_PLAY' ? 'badge-live' :
                       m.status === 'FINISHED' ? 'badge-finished' :
                       m.tbd ? 'badge-tbd' : 'badge-scheduled';
-  const badgeText   = m.status === 'IN_PLAY' ? '🔴 EN VIVO' :
+  const badgeText   = today ? '⚡ HOY' :
+                      m.status === 'IN_PLAY' ? '🔴 EN VIVO' :
                       m.status === 'FINISHED' ? '✅ Finalizado' :
                       m.tbd ? 'Por definir' : '🕒 Programado';
 
@@ -2355,6 +2423,7 @@ function filterMatches(filter, btn) {
     const active = document.querySelector(`[data-filter="${filter}"]`);
     if (active) active.classList.add('active');
   }
+  renderPhaseTabs();
   renderMatches();
 }
 
