@@ -283,6 +283,89 @@ body {
   border-radius: 0 0 2px 2px;
 }
 
+/* ─── AUTH TABS ─── */
+.auth-tabs {
+  display: flex; gap: 0; margin-bottom: 1.5rem;
+  border: 1px solid rgba(79,195,247,0.15);
+  border-radius: 10px; overflow: hidden;
+  opacity: 0; animation: fadeInUp 0.6s ease 0.9s both;
+}
+.auth-tab {
+  flex: 1; padding: 0.6rem 0.5rem;
+  border: none; background: transparent; cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700; font-size: 0.8rem; letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-sub); transition: all 0.2s;
+}
+.auth-tab:hover { color: var(--text); }
+.auth-tab.active { background: rgba(79,195,247,0.1); color: var(--gold); }
+
+/* ─── AUTH FORMS ─── */
+.auth-form { display: none; opacity: 0; animation: fadeInUp 0.4s ease both; }
+.auth-form.active { display: block; opacity: 1; }
+.auth-form .form-group {
+  margin-bottom: 0.85rem; text-align: left;
+}
+.auth-form .form-group label {
+  display: block; font-size: 0.7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-sub); margin-bottom: 0.35rem;
+}
+.auth-form .form-input {
+  width: 100%; padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid rgba(79,195,247,0.12);
+  border-radius: 10px; color: var(--text);
+  font-family: 'Barlow', sans-serif; font-size: 0.9rem;
+  outline: none; transition: all 0.2s;
+}
+.auth-form .form-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(79,195,247,0.1);
+}
+.auth-form .form-input::placeholder { color: var(--text-sub); opacity: 0.5; }
+.btn-auth {
+  width: 100%; padding: 0.8rem 1rem; margin-top: 0.5rem;
+  background: linear-gradient(135deg, #4FC3F7 0%, #039BE5 100%);
+  border: none; border-radius: 10px; cursor: pointer;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800; font-size: 0.95rem; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--navy);
+  box-shadow: 0 4px 15px rgba(3,155,229,0.3);
+  transition: all 0.3s cubic-bezier(0.16,1,0.3,1);
+}
+.btn-auth:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(3,155,229,0.4);
+}
+.btn-auth:active { transform: translateY(0) scale(0.98); }
+.btn-auth:disabled {
+  opacity: 0.5; cursor: not-allowed; transform: none;
+}
+.auth-divider {
+  display: flex; align-items: center; gap: 1rem;
+  margin: 1rem 0; color: var(--text-sub);
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px;
+  opacity: 0; animation: fadeInUp 0.6s ease 1.1s both;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: ''; flex: 1; height: 1px;
+  background: rgba(255,255,255,0.08);
+}
+.auth-error {
+  font-size: 0.75rem; color: var(--red);
+  margin-top: 0.5rem; min-height: 1.2em; text-align: left;
+}
+.auth-success {
+  font-size: 0.75rem; color: var(--green);
+  margin-top: 0.5rem; min-height: 1.2em; text-align: left;
+}
+.auth-form .form-row {
+  display: flex; gap: 0.5rem;
+}
+
 .login-trophy {
   font-size: 4rem;
   margin-bottom: 0.75rem;
@@ -884,6 +967,53 @@ body {
       VEHIDIESEL S.A.S
     </div>
     <div class="login-subtitle">Pronostica · Compite · Gana</div>
+
+    <!-- Auth tabs -->
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-auth="login" onclick="showAuthForm('login',this)">Iniciar Sesión</button>
+      <button class="auth-tab" data-auth="register" onclick="showAuthForm('register',this)">Registrarse</button>
+    </div>
+
+    <!-- Login form -->
+    <div class="auth-form active" id="authFormLogin">
+      <div class="form-group">
+        <label>Correo Electrónico</label>
+        <input class="form-input" type="email" id="loginEmail" placeholder="tu@correo.com" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label>Contraseña</label>
+        <input class="form-input" type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')loginWithEmail()">
+      </div>
+      <div class="auth-error" id="loginError"></div>
+      <button class="btn-auth" id="loginBtn" onclick="loginWithEmail()">Iniciar Sesión</button>
+    </div>
+
+    <!-- Register form -->
+    <div class="auth-form" id="authFormRegister">
+      <div class="form-group">
+        <label>Nombre Completo</label>
+        <input class="form-input" type="text" id="regName" placeholder="Tu nombre completo" autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label>Correo Electrónico</label>
+        <input class="form-input" type="email" id="regEmail" placeholder="tu@correo.com" autocomplete="email">
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label>Contraseña</label>
+          <input class="form-input" type="password" id="regPassword" placeholder="Mín. 6 caracteres" autocomplete="new-password">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>Confirmar</label>
+          <input class="form-input" type="password" id="regConfirm" placeholder="Repite la contraseña" autocomplete="new-password" onkeydown="if(event.key==='Enter')registerWithEmail()">
+        </div>
+      </div>
+      <div class="auth-error" id="registerError"></div>
+      <button class="btn-auth" id="registerBtn" onclick="registerWithEmail()">Crear Cuenta</button>
+    </div>
+
+    <div class="auth-divider">O continúa con</div>
+
     <button class="btn-google" onclick="loginWithGoogle()">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -1171,6 +1301,75 @@ async function loginWithGoogle() {
   }
 }
 
+/* ─── Email / Password Auth ─── */
+function showAuthForm(form, btn) {
+  document.querySelectorAll('.auth-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.auth-form').forEach(f=>f.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.getElementById(`authForm${form.charAt(0).toUpperCase()+form.slice(1)}`).classList.add('active');
+  document.getElementById('loginError').textContent = '';
+  document.getElementById('registerError').textContent = '';
+}
+
+async function loginWithEmail() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass  = document.getElementById('loginPassword').value;
+  const error = document.getElementById('loginError');
+  const btn   = document.getElementById('loginBtn');
+  if (!email || !pass) { error.textContent = 'Completa todos los campos'; return; }
+  error.textContent = '';
+  btn.disabled = true; btn.textContent = 'Ingresando...';
+  try {
+    await auth.signInWithEmailAndPassword(email, pass);
+  } catch (e) {
+    const msgs = {
+      'auth/user-not-found': 'No hay cuenta con este correo',
+      'auth/wrong-password': 'Contraseña incorrecta',
+      'auth/invalid-email': 'Correo inválido',
+      'auth/user-disabled': 'Cuenta deshabilitada',
+      'auth/invalid-credential': 'Correo o contraseña incorrectos'
+    };
+    error.textContent = msgs[e.code] || 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Iniciar Sesión';
+  }
+}
+
+async function registerWithEmail() {
+  const name    = document.getElementById('regName').value.trim();
+  const email   = document.getElementById('regEmail').value.trim();
+  const pass    = document.getElementById('regPassword').value;
+  const confirm = document.getElementById('regConfirm').value;
+  const error   = document.getElementById('registerError');
+  const btn     = document.getElementById('registerBtn');
+  if (!name || !email || !pass || !confirm) { error.textContent = 'Completa todos los campos'; return; }
+  if (pass.length < 6) { error.textContent = 'La contraseña debe tener al menos 6 caracteres'; return; }
+  if (pass !== confirm) { error.textContent = 'Las contraseñas no coinciden'; return; }
+  error.textContent = '';
+  btn.disabled = true; btn.textContent = 'Creando cuenta...';
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, pass);
+    await cred.user.updateProfile({ displayName: name });
+    /* Save profile directly to RTDB so it's immediately available */
+    if (db) {
+      await db.ref(`users/${sanitizeKey(email)}`).set({
+        name, email, photoURL: '',
+        lastLogin: new Date().toISOString()
+      });
+    }
+    await cred.user.reload();
+  } catch (e) {
+    const msgs = {
+      'auth/email-already-in-use': 'Este correo ya está registrado',
+      'auth/invalid-email': 'Correo inválido',
+      'auth/weak-password': 'La contraseña es muy débil'
+    };
+    error.textContent = msgs[e.code] || 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Crear Cuenta';
+  }
+}
+
 async function logout() {
   try {
     await auth.signOut();
@@ -1189,6 +1388,14 @@ function showLogin() {
   const l = document.getElementById('adminStatLink');
   if (l) l.style.display = 'none';
   isAdmin = false;
+  /* Reset auth forms to login tab */
+  showAuthForm('login', document.querySelector('[data-auth="login"]'));
+  document.getElementById('loginEmail').value = '';
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('regName').value = '';
+  document.getElementById('regEmail').value = '';
+  document.getElementById('regPassword').value = '';
+  document.getElementById('regConfirm').value = '';
 }
 
 async function onUserLoggedIn(user) {
@@ -1224,12 +1431,18 @@ async function onUserLoggedIn(user) {
   /* Guardar perfil en Firebase (con try/catch para no bloquear) */
   if (db) {
     try {
-      await db.ref(`users/${sanitizeKey(user.email)}`).set({
-        name:     user.displayName,
+      const emailKey = sanitizeKey(user.email);
+      const existing = allUsers[emailKey] || {};
+      const profile = {
         email:    user.email,
-        photoURL: user.photoURL || '',
-        lastLogin: new Date().toISOString()
-      });
+        lastLogin: new Date().toISOString(),
+        photoURL: user.photoURL || existing.photoURL || ''
+      };
+      /* Only set name if available from auth provider, otherwise keep existing */
+      if (user.displayName) profile.name = user.displayName;
+      else if (existing.name) profile.name = existing.name;
+      else profile.name = user.email.split('@')[0];
+      await db.ref(`users/${emailKey}`).update(profile);
     } catch (e) {
       console.warn("Error guardando perfil:", e.message);
     }
