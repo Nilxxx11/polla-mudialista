@@ -1701,7 +1701,11 @@ function listenToMatches() {
   db.ref('matches').on('value', async snap => {
     const fbData = snap.val();
     if (fbData && fbData.data && Array.isArray(fbData.data)) {
-      allMatches = fbData.data;
+      /* Ensure each match has a score object to avoid rendering errors */
+      allMatches = fbData.data.map(m => ({
+        ...m,
+        score: m.score || { home: null, away: null }
+      }));
       cacheMatches();
       const updated = fbData.updated || '';
       setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
@@ -1891,7 +1895,7 @@ function renderMatchCard(m, idx) {
                       m.tbd ? 'Por definir' : '🕒 Programado';
 
   /* Score display */
-  const hasScore = m.score.home !== null && m.score.away !== null;
+  const hasScore = m.score && m.score.home !== null && m.score.away !== null;
   const scoreHTML = hasScore
     ? `<div class="score-display">${m.score.home} <span class="score-separator">:</span> ${m.score.away}</div>`
     : `<div class="vs-text">VS</div>`;
@@ -2030,7 +2034,7 @@ function buildRanking(allProns) {
     let pts = 0, exact = 0, winner = 0, total = 0;
     for (const [matchId, pron] of Object.entries(prons)) {
       const m = allMatches.find(x => x.id === matchId);
-      if (!m || m.status !== 'FINISHED' || m.score.home === null) continue;
+      if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
       const p = calcPoints(pron, m.score);
       pts += p;
       total++;
@@ -2120,7 +2124,7 @@ function computeStats(allProns) {
 
   /* Por partido: cuántos acertaron el resultado exacto */
   const matchAccuracy = {};
-  allMatches.filter(m=>m.status==='FINISHED'&&m.score.home!==null).forEach(m=>{
+  allMatches.filter(m=>m.status==='FINISHED'&&m.score&&m.score.home!==null).forEach(m=>{
     let correct=0, count=0;
     for (const prons of Object.values(allProns)) {
       if (prons[m.id]) {
@@ -2142,7 +2146,7 @@ function computeStats(allProns) {
     for (const [mid, p] of Object.entries(prons)) {
       totalProns++;
       const m = allMatches.find(x=>x.id===mid);
-      if (m&&m.status==='FINISHED'&&m.score.home!==null) {
+      if (m&&m.status==='FINISHED'&&m.score&&m.score.home!==null) {
         if (calcPoints(p,m.score)===SCORING.EXACT_SCORE) exactTotal++;
       }
     }
@@ -2232,8 +2236,8 @@ function adminExportCSV() {
         for (const [matchId, pron] of Object.entries(prons)) {
           const m = allMatches.find(x => x.id === matchId);
           if (!m) continue;
-          const pts = (m.status==='FINISHED'&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
-          const result = (m.score.home!==null) ? `${m.score.home}-${m.score.away}` : '—';
+          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
+          const result = (m.score&&m.score.home!==null) ? `${m.score.home}-${m.score.away}` : '—';
           rows.push([user.name||emailKey, matchId, m.homeTeam, m.awayTeam,
             `${pron.golesA}-${pron.golesB}`, result, pts, pron.timestamp?.substring(0,10)||'']);
         }
@@ -2273,8 +2277,8 @@ function renderAdminPage() {
         for (const [matchId, pron] of Object.entries(prons)) {
           const m = allMatches.find(x=>x.id===matchId);
           if (!m) continue;
-          const pts = (m.status==='FINISHED'&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
-          const result = m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
+          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
+          const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
           rows += `<tr>
             <td>${escHtml(user.name||emailKey)}</td>
             <td>${escHtml(m.homeTeam)} vs ${escHtml(m.awayTeam)}</td>
