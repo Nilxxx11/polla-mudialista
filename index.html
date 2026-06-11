@@ -1036,7 +1036,7 @@ body {
         </tr>
       </table>
       <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
-        💡 Los pronósticos se bloquean 1 hora antes del inicio del partido. ¡No olvides pronosticar antes!
+        💡 Los pronósticos se bloquean 1 día antes del inicio del partido. ¡No olvides pronosticar antes!
       </div>
     </div>
     <div class="modal-actions">
@@ -1662,9 +1662,7 @@ async function fetchFromAPI() {
     const data = await res.json();
     return (data.data || []).map(m => {
       const hasScore = m.homeScore !== null && m.awayScore !== null;
-      const utcStr = m.kickoff
-        ? `${m.date}T${m.kickoff}:00Z`
-        : `${m.date}T20:00:00Z`;
+      const utcStr = m.kickoffUtc || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
       return {
         id:       m.id,
         homeTeam: m.homeTeam,
@@ -2238,7 +2236,7 @@ function recalcAllPoints() {
    ══════════════════════════════════════════════ */
 function isMatchLocked(m) {
   if (m.tbd) return true;
-  return new Date(m.utcDate).getTime() - 3600000 <= Date.now();
+  return new Date(m.utcDate).getTime() - 86400000 <= Date.now();
 }
 
 function sanitizeKey(email) {
