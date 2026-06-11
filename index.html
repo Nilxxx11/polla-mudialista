@@ -1669,36 +1669,57 @@ async function loadMatches() {
   const grid = document.getElementById('matchesGrid');
   grid.innerHTML = `<div class="loading-wrap"><div class="spinner"></div><div class="loading-text">Obteniendo partidos del Mundial 2026...</div></div>`;
 
-  /* Verificar caché */
+  /* Cargar caché local para mostrar algo inmediato */
   const cached = localStorage.getItem(CACHE_KEY);
-  const ts     = localStorage.getItem(CACHE_TIME);
-  const age    = ts ? (Date.now() - parseInt(ts)) : Infinity;
+  if (cached) {
+    try {
+      allMatches = JSON.parse(cached);
+      renderMatches();
+      renderPhaseTabs();
+    } catch(e) {}
+  }
 
-  if (cached && age < API_CONFIG.REFRESH_INTERVAL) {
-    allMatches = JSON.parse(cached);
+  if (db) {
+    /* Escuchar Firebase para actualizaciones en tiempo real */
+    listenToMatches();
+  } else {
+    /* Sin Firebase, usar API directamente */
+    try {
+      const fresh = await fetchFromAPI();
+      if (fresh.length) { allMatches = fresh; cacheMatches(); }
+      setSyncStatus("Sincronizado • " + new Date().toLocaleTimeString('es-CO'));
+    } catch (e) {
+      if (!cached) toast("No se pudieron cargar los partidos.", "error");
+    }
     renderMatches();
     renderPhaseTabs();
-    setSyncStatus("Datos en caché • " + timeAgo(parseInt(ts)));
-    return;
   }
+}
 
-  try {
-    allMatches = await fetchFromAPI();
-    cacheMatches();
-    setSyncStatus("Sincronizado • " + new Date().toLocaleTimeString('es-CO'));
-  } catch (e) {
-    console.error("Error cargando partidos:", e.message);
-    /* Fallback a caché aunque esté vencida */
-    if (cached) {
-      allMatches = JSON.parse(cached);
-      setSyncStatus("Caché sin conexión • " + timeAgo(parseInt(ts)));
-      toast("Usando datos en caché. No se pudo conectar con la API.", "info");
-    } else {
-      toast("No se pudieron cargar los partidos. Verifica la conexión.", "error");
+function listenToMatches() {
+  if (!db) return;
+  db.ref('matches').on('value', async snap => {
+    const fbData = snap.val();
+    if (fbData && fbData.data && Array.isArray(fbData.data)) {
+      allMatches = fbData.data;
+      cacheMatches();
+      const updated = fbData.updated || '';
+      setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
+      renderMatches();
+      renderPhaseTabs();
+      recalcAllPoints();
+    } else if (!allMatches.length) {
+      /* No hay datos en Firebase, traer de API y guardar */
+      try {
+        const fresh = await fetchFromAPI();
+        if (fresh.length) {
+          await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+        }
+      } catch(e) {
+        toast("Error cargando partidos.", "error");
+      }
     }
-  }
-  renderMatches();
-  renderPhaseTabs();
+  });
 }
 
 async function refreshResults() {
@@ -1708,7 +1729,13 @@ async function refreshResults() {
 
   try {
     const fresh = await fetchFromAPI();
-    if (fresh.length) { allMatches = fresh; cacheMatches(); }
+    if (fresh.length) {
+      if (db) {
+        await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+      } else {
+        allMatches = fresh; cacheMatches();
+      }
+    }
   } catch (e) {
     console.warn("Error en refresco:", e.message);
   }
@@ -2169,11 +2196,16 @@ function computeStats(allProns) {
 async function adminForceSync() {
   if (!isAdmin) return;
   toast("🔄 Forzando sincronización...", "info");
-  localStorage.removeItem(CACHE_KEY);
-  localStorage.removeItem(CACHE_TIME);
-  await loadMatches();
+  try {
+    const fresh = await fetchFromAPI();
+    if (fresh.length && db) {
+      await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+      cacheMatches();
+    }
+  } catch (e) {
+    toast("Error al sincronizar: " + e.message, "error");
+  }
   document.getElementById('adminSyncStatus').textContent = '✅ Sincronización forzada — ' + new Date().toLocaleString('es-CO');
-  toast("Sincronización completada", "success");
 }
 
 function adminClearCache() {
