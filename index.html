@@ -1022,12 +1022,12 @@ body {
         <tr>
           <td><span class="points-icon">🎯</span></td>
           <td><strong>Resultado Exacto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Aciertas el marcador exacto</span></td>
-          <td style="text-align:right"><span class="pts-badge">+3 pts</span></td>
+          <td style="text-align:right"><span class="pts-badge">+5 pts</span></td>
         </tr>
         <tr>
           <td><span class="points-icon">✅</span></td>
           <td><strong>Ganador o Empate Correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Aciertas quién gana o que empatan</span></td>
-          <td style="text-align:right"><span class="pts-badge">+1 pt</span></td>
+          <td style="text-align:right"><span class="pts-badge">+2 pts</span></td>
         </tr>
         <tr>
           <td><span class="points-icon">❌</span></td>
@@ -2238,7 +2238,7 @@ function recalcAllPoints() {
    ══════════════════════════════════════════════ */
 function isMatchLocked(m) {
   if (m.tbd) return true;
-  return new Date(m.utcDate).getTime() <= Date.now();
+  return new Date(m.utcDate).getTime() - 3600000 <= Date.now();
 }
 
 function sanitizeKey(email) {
