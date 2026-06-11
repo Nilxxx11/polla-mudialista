@@ -175,6 +175,42 @@ body {
   font-size: 0.7rem; color: var(--gold); font-weight: 700;
 }
 .user-name { font-size: 0.78rem; color: rgba(255,255,255,0.8); font-weight: 500; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── HAMBURGER (hidden on desktop) ─── */
+.hamburger {
+  display: none; width: 34px; height: 34px; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent;
+  cursor: pointer; place-items: center;
+  color: rgba(255,255,255,0.7); font-size: 1.2rem;
+  transition: all 0.2s; flex-shrink: 0;
+}
+.hamburger:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ─── MOBILE NAV (hidden on desktop) ─── */
+.mobile-nav-overlay {
+  display: none; position: fixed; inset: 0; z-index: 90;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+}
+.mobile-nav {
+  display: none; position: fixed; top: 64px; left: 0; right: 0; z-index: 95;
+  background: var(--bg-card); border-bottom: 1px solid var(--border);
+  padding: 0.5rem; flex-direction: column; gap: 2px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+}
+.mobile-nav.open { display: flex; animation: slideDown 0.25s cubic-bezier(0.16,1,0.3,1) both; }
+.mobile-nav-overlay.open { display: block; animation: fadeIn 0.2s ease both; }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.mobile-nav .nav-tab {
+  padding: 0.75rem 1rem; font-size: 0.95rem;
+  text-align: left; border-radius: 8px;
+  width: 100%;
+}
+.mobile-nav .nav-tab.active {
+  background: var(--gold-pale); color: var(--gold);
+}
+.mobile-nav .nav-tab.active::after { display: none; }
+
 .btn-logout {
   font-size: 0.7rem; color: var(--text-muted);
   background: none; border: none; cursor: pointer;
@@ -970,8 +1006,8 @@ body {
    ═══════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
   .header-inner { padding: 0 0.5rem; }
-  .nav-tabs { margin-left: 0.5rem; }
-  .nav-tab { padding: 0.4rem 0.7rem; font-size: 0.75rem; }
+  .nav-tabs { display: none; }
+  .hamburger { display: grid; }
   .logo-text { display: none; }
   .user-name { display: none; }
   .container { padding: 1rem 0.75rem; }
@@ -1171,6 +1207,7 @@ body {
       <div class="header-actions">
         <button class="btn-points-info" onclick="showPointsInfo()" title="Cómo se ganan puntos">🏆 Puntos</button>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Cambiar tema">🌙</button>
+        <button class="hamburger" id="hamburgerBtn" onclick="toggleMobileMenu()" aria-label="Menú">☰</button>
         <div class="user-chip" id="userChip" style="display:none">
           <img class="user-avatar" id="userAvatar" src="" alt="" style="display:none">
           <div class="user-avatar-placeholder" id="userAvatarPh" style="display:none"></div>
@@ -1180,6 +1217,15 @@ body {
       </div>
     </div>
   </header>
+
+  <!-- Mobile navigation dropdown -->
+  <div class="mobile-nav-overlay" id="mobileNavOverlay" onclick="closeMobileMenu()"></div>
+  <div class="mobile-nav" id="mobileNav">
+    <button class="nav-tab active" data-page="matches" onclick="navigate('matches',this);closeMobileMenu()">⚽ Partidos</button>
+    <button class="nav-tab" data-page="leaderboard" onclick="navigate('leaderboard',this);closeMobileMenu()">🏆 Posiciones</button>
+    <button class="nav-tab" data-page="stats" onclick="navigate('stats',this);closeMobileMenu()">📊 Estadísticas</button>
+    <button class="nav-tab admin-tab hidden" data-page="admin" id="adminTabMobile" onclick="navigate('admin',this);closeMobileMenu()">⚙️ Admin</button>
+  </div>
 
   <!-- MAIN -->
   <main class="container">
@@ -1513,6 +1559,8 @@ function showLogin() {
   /* Limpiar estado admin al cerrar sesión */
   const t = document.getElementById('adminTab');
   if (t) t.classList.add('hidden');
+  const tm = document.getElementById('adminTabMobile');
+  if (tm) tm.classList.add('hidden');
   const d = document.getElementById('adminDivider');
   if (d) d.style.display = 'none';
   const l = document.getElementById('adminStatLink');
@@ -1541,19 +1589,19 @@ async function onUserLoggedIn(user) {
 
   /* Mostrar admin tab y link en stats bar */
   const adminTab = document.getElementById('adminTab');
+  const adminTabMobile = document.getElementById('adminTabMobile');
   const adminDivider = document.getElementById('adminDivider');
   const adminLink = document.getElementById('adminStatLink');
   if (isAdmin) {
-    if (adminTab) {
-      adminTab.classList.remove('hidden');
-      adminTab.style.removeProperty('display');
-    }
+    if (adminTab) { adminTab.classList.remove('hidden'); adminTab.style.removeProperty('display'); }
+    if (adminTabMobile) { adminTabMobile.classList.remove('hidden'); adminTabMobile.style.removeProperty('display'); }
     if (adminDivider) adminDivider.style.display = '';
     if (adminLink) adminLink.style.display = '';
     document.getElementById('userName').textContent += ' 🔧';
     toast('🔧 Admin activado', 'success');
   } else {
     if (adminTab) adminTab.classList.add('hidden');
+    if (adminTabMobile) adminTabMobile.classList.add('hidden');
     if (adminDivider) adminDivider.style.display = 'none';
     if (adminLink) adminLink.style.display = 'none';
     toast('Sesión iniciada como: ' + user.email, 'info');
@@ -2428,6 +2476,23 @@ function filterMatches(filter, btn) {
 }
 
 /* ══════════════════════════════════════════════
+   MOBILE MENU
+   ══════════════════════════════════════════════ */
+function toggleMobileMenu() {
+  const nav = document.getElementById('mobileNav');
+  const overlay = document.getElementById('mobileNavOverlay');
+  const btn = document.getElementById('hamburgerBtn');
+  const isOpen = nav.classList.toggle('open');
+  overlay.classList.toggle('open');
+  btn.textContent = isOpen ? '✕' : '☰';
+}
+function closeMobileMenu() {
+  document.getElementById('mobileNav').classList.remove('open');
+  document.getElementById('mobileNavOverlay').classList.remove('open');
+  document.getElementById('hamburgerBtn').textContent = '☰';
+}
+
+/* ══════════════════════════════════════════════
    THEME
    ══════════════════════════════════════════════ */
 function toggleTheme() {
@@ -2477,6 +2542,9 @@ document.getElementById('confirmModal').onclick = e => { if (e.target===e.curren
    ══════════════════════════════════════════════ */
 initTheme();
 initFirebase();
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 768) closeMobileMenu();
+});
 </script>
 </body>
 </html>
