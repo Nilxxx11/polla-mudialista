@@ -1134,7 +1134,7 @@ body {
     <div class="auth-form active" id="authFormLogin">
       <div class="form-group">
         <label>Correo Electrónico</label>
-        <input class="form-input" type="email" id="loginEmail" placeholder="tu@correo.com" autocomplete="email">
+        <input class="form-input" type="email" id="loginEmail" placeholder="tu@correo.com" autocomplete="email" autocapitalize="none" spellcheck="false" oninput="this.value=this.value.toLowerCase()">
       </div>
       <div class="form-group">
         <label>Contraseña</label>
@@ -1152,7 +1152,7 @@ body {
       </div>
       <div class="form-group">
         <label>Correo Electrónico</label>
-        <input class="form-input" type="email" id="regEmail" placeholder="tu@correo.com" autocomplete="email">
+        <input class="form-input" type="email" id="regEmail" placeholder="tu@correo.com" autocomplete="email" autocapitalize="none" spellcheck="false" oninput="this.value=this.value.toLowerCase()">
       </div>
       <div class="form-row">
         <div class="form-group" style="flex:1">
@@ -1488,7 +1488,7 @@ function showAuthForm(form, btn) {
 
 async function loginWithEmail() {
   if (!auth) { toast("Firebase no disponible", "error"); return; }
-  const email = document.getElementById('loginEmail').value.trim();
+  const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const error = document.getElementById('loginError');
   const btn   = document.getElementById('loginBtn');
@@ -1514,7 +1514,7 @@ async function loginWithEmail() {
 async function registerWithEmail() {
   if (!auth) { toast("Firebase no disponible", "error"); return; }
   const name    = document.getElementById('regName').value.trim();
-  const email   = document.getElementById('regEmail').value.trim();
+  const email   = document.getElementById('regEmail').value.trim().toLowerCase();
   const pass    = document.getElementById('regPassword').value;
   const confirm = document.getElementById('regConfirm').value;
   const error   = document.getElementById('registerError');
@@ -1619,12 +1619,12 @@ async function onUserLoggedIn(user) {
   /* Guardar perfil en Firebase y leer activo directamente */
   if (db) {
     try {
-      const emailKey = sanitizeKey(user.email);
+      const emailKey = sanitizeKey(user.email.toLowerCase());
       /* Leer el perfil actual desde Firebase para obtener el valor real de activo */
       const snap = await db.ref(`users/${emailKey}`).once('value');
       const existing = snap.val() || {};
       const profile = {
-        email:    user.email,
+        email:    user.email.toLowerCase(),
         lastLogin: new Date().toISOString(),
         photoURL: user.photoURL || existing.photoURL || ''
       };
