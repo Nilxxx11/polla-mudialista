@@ -1098,7 +1098,7 @@ body {
         </tr>
       </table>
       <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
-        💡 Los pronósticos se bloquean 1 día antes del inicio del partido. ¡No olvides pronosticar antes!
+        💡 Los pronósticos se bloquean 1 hora antes del inicio del partido. ¡No olvides pronosticar antes!
       </div>
     </div>
     <div class="modal-actions">
@@ -2268,40 +2268,48 @@ function renderAdminPage() {
     document.getElementById('adminTableBody').innerHTML = `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">Firebase no disponible</td></tr>`;
     return;
   }
+  const showError = (msg) => {
+    document.getElementById('adminParticipantsInfo').innerHTML = `<span style="color:var(--red)">⚠️ ${msg}</span>`;
+    document.getElementById('adminTableBody').innerHTML = `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">${msg}</td></tr>`;
+  };
   db.ref('users').once('value', usersSnap => {
     allUsers = usersSnap.val() || {};
   }).then(() => {
-    db.ref('pronosticos').once('value', snap => {
-      const allProns = snap.val() || {};
-      const userCount = Object.keys(allProns).length;
-      let pronCount = 0;
-      for (const p of Object.values(allProns)) pronCount += Object.keys(p).length;
-      document.getElementById('adminParticipantsInfo').innerHTML = `
-        <strong>${userCount}</strong> participantes<br>
-        <strong>${pronCount}</strong> pronósticos registrados`;
+    return db.ref('pronosticos').once('value');
+  }).then(snap => {
+    const allProns = snap.val() || {};
+    const totalReg = Object.keys(allUsers).length;
+    const activos  = Object.keys(allProns).length;
+    let pronCount = 0;
+    for (const p of Object.values(allProns)) pronCount += Object.keys(p).length;
+    document.getElementById('adminParticipantsInfo').innerHTML = `
+      <strong>${totalReg}</strong> usuarios registrados<br>
+      <strong>${activos}</strong> participantes con pronósticos<br>
+      <strong>${pronCount}</strong> pronósticos registrados`;
 
-      let rows = '';
-      for (const [emailKey, prons] of Object.entries(allProns)) {
-        const user = allUsers[emailKey] || { name: emailKey };
-        for (const [matchId, pron] of Object.entries(prons)) {
-          const m = allMatches.find(x=>x.id===matchId);
-          if (!m) continue;
-          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
-          const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
-          rows += `<tr>
-            <td>${escHtml(user.name||emailKey)}</td>
-            <td>${escHtml(m.homeTeam)} vs ${escHtml(m.awayTeam)}</td>
-            <td><strong>${pron.golesA}–${pron.golesB}</strong></td>
-            <td>${result}</td>
-            <td><strong>${pts}</strong></td>
-            <td>${pron.timestamp?.substring(0,10)||'—'}</td>
-          </tr>`;
-        }
+    let rows = '';
+    for (const [emailKey, prons] of Object.entries(allProns)) {
+      const user = allUsers[emailKey] || { name: emailKey };
+      for (const [matchId, pron] of Object.entries(prons)) {
+        const m = allMatches.find(x=>x.id===matchId);
+        if (!m) continue;
+        const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
+        const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
+        rows += `<tr>
+          <td>${escHtml(user.name||emailKey)}</td>
+          <td>${escHtml(m.homeTeam)} vs ${escHtml(m.awayTeam)}</td>
+          <td><strong>${pron.golesA}–${pron.golesB}</strong></td>
+          <td>${result}</td>
+          <td><strong>${pts}</strong></td>
+          <td>${pron.timestamp?.substring(0,10)||'—'}</td>
+        </tr>`;
       }
-      document.getElementById('adminTableBody').innerHTML = rows || `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">Sin pronósticos aún</td></tr>`;
-      /* Load user management */
-      loadAdminUsers();
-    });
+    }
+    document.getElementById('adminTableBody').innerHTML = rows || `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">Sin pronósticos aún</td></tr>`;
+    loadAdminUsers();
+  }).catch(err => {
+    console.error('Error en renderAdminPage:', err);
+    showError('Error al cargar datos: ' + err.message);
   });
 }
 
@@ -2398,7 +2406,7 @@ function recalcAllPoints() {
    ══════════════════════════════════════════════ */
 function isMatchLocked(m) {
   if (m.tbd) return true;
-  return new Date(m.utcDate).getTime() - 86400000 <= Date.now();
+  return new Date(m.utcDate).getTime() - 3600000 <= Date.now();
 }
 
 function sanitizeKey(email) {
