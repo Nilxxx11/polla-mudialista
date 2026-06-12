@@ -1320,6 +1320,7 @@ body {
           <div class="admin-card-title"><span>🔄</span> Sincronización</div>
           <button class="btn-admin" onclick="adminForceSync()">🔄 Forzar sincronización con API</button>
           <button class="btn-admin" onclick="adminClearCache()">🗑️ Limpiar caché de partidos</button>
+          <button class="btn-admin" onclick="adminMigrateKeys()">🔧 Normalizar emails existentes</button>
           <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-sub)" id="adminSyncStatus">—</div>
         </div>
         <div class="admin-card">
@@ -1620,7 +1621,20 @@ async function onUserLoggedIn(user) {
   if (db) {
     try {
       const emailKey = sanitizeKey(user.email.toLowerCase());
-      /* Leer el perfil actual desde Firebase para obtener el valor real de activo */
+      const oldKey   = sanitizeKey(user.email);
+      /* Migrar datos de key antigua (mixed-case) a key normalizada */
+      if (oldKey !== emailKey) {
+        const oldUserSnap = await db.ref(`users/${oldKey}`).once('value');
+        if (oldUserSnap.exists()) {
+          const oldPronsSnap = await db.ref(`pronosticos/${oldKey}`).once('value');
+          if (oldPronsSnap.exists()) {
+            await db.ref(`pronosticos/${emailKey}`).update(oldPronsSnap.val());
+            await db.ref(`pronosticos/${oldKey}`).remove();
+          }
+          await db.ref(`users/${oldKey}`).remove();
+          console.log(`Migrados datos de ${oldKey} → ${emailKey}`);
+        }
+      }
       const snap = await db.ref(`users/${emailKey}`).once('value');
       const existing = snap.val() || {};
       const profile = {
@@ -2260,6 +2274,39 @@ function adminExportCSV() {
       toast("📥 CSV descargado", "success");
     });
   });
+}
+
+async function adminMigrateKeys() {
+  if (!db) { toast("Firebase no disponible", "error"); return; }
+  if (!confirm("¿Migrar todas las keys con mayúsculas a minúsculas? Esta acción no se puede deshacer.")) return;
+  toast("🔧 Normalizando emails...", "info");
+  try {
+    const [usersSnap, pronsSnap] = await Promise.all([
+      db.ref('users').once('value'),
+      db.ref('pronosticos').once('value')
+    ]);
+    const users = usersSnap.val() || {};
+    const prons = pronsSnap.val() || {};
+    let migrated = 0;
+    for (const key of Object.keys(users)) {
+      const lowerKey = sanitizeKey(key.replace(/,/g, '.').replace(/_at_/g, '@').toLowerCase());
+      if (key !== lowerKey) {
+        if (!users[lowerKey]) {
+          await db.ref(`users/${lowerKey}`).set(users[key]);
+        }
+        await db.ref(`users/${key}`).remove();
+        if (prons[key]) {
+          await db.ref(`pronosticos/${lowerKey}`).set(prons[key]);
+          await db.ref(`pronosticos/${key}`).remove();
+        }
+        migrated++;
+      }
+    }
+    toast(`✅ ${migrated} usuario(s) migrados correctamente`, "success");
+    renderAdminPage();
+  } catch (e) {
+    toast("Error en migración: " + e.message, "error");
+  }
 }
 
 function renderAdminPage() {
