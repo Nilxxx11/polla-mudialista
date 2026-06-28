@@ -1738,18 +1738,23 @@ function listenToMatches() {
         }));
         const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
-        if (!fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
+        const neededFill = !fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
+        let filledR32 = false;
+        if (neededFill) {
           fbMatches = await fillR32Pairings(fbMatches);
+          filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
         }
-        const filledOk = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
         const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
-        if (!filledOk && currentHasR32) return;
+        if (neededFill && !filledR32 && currentHasR32) return;
         allMatches = fbMatches;
         cacheMatches();
+        if (filledR32 && db) {
+          await db.ref('matches').set({ data: fbMatches, updated: new Date().toISOString() });
+        }
         renderMatches();
         renderPhaseTabs();
         recalcAllPoints();
-      } else if (!allMatches.length) {
+      } else {
         fetchFromAPI().then(fresh => {
           if (fresh.length) db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
         }).catch(() => toast("Error cargando partidos.", "error"));
