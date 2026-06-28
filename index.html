@@ -1699,10 +1699,11 @@ async function loadMatches() {
     try {
       allMatches = JSON.parse(cached);
       if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
-        fillR32Pairings(allMatches).then(filled => { allMatches = filled; renderMatches(); renderPhaseTabs(); });
+        fillR32Pairings(allMatches).then(filled => { allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); });
+      } else {
+        renderMatches();
+        renderPhaseTabs();
       }
-      renderMatches();
-      renderPhaseTabs();
     } catch(e) {}
   }
 
@@ -1733,7 +1734,6 @@ function listenToMatches() {
           ...m,
           score: m.score || { home: null, away: null }
         }));
-        cacheMatches();
         const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
         if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
@@ -1742,6 +1742,7 @@ function listenToMatches() {
           });
           return;
         }
+        cacheMatches();
         renderMatches();
         renderPhaseTabs();
         recalcAllPoints();
@@ -1797,12 +1798,81 @@ function zafronixStageToPhase(stage) {
 }
 
 /* ─────────────────────────────────────────────
-   GENERAR CRUCES DE TREINTAIDOSAVOS
+   GENERAR CRUCES DE TREINTAIDOSAVOS (FIFA Annex C)
    ───────────────────────────────────────────── */
-async function fillR32Pairings(matches) {
+const ANNEX_C_WINNERS = ["A","B","D","E","G","I","K","L"];
+const ANNEX_C_ROWS = [
+  "EJIFHGLK","HGIDJFLK","EJIDHGLK","EJIDHFLK","EGIDJFLK","EGJDHFLK","EGIDHFLK","EGJDHFLI","EGJDHFIK",
+  "HGICJFLK","EJICHGLK","EJICHFLK","EGICJFLK","EGJCHFLK","EGICHFLK","EGJCHFLI","EGJCHFIK",
+  "HGICJDLK","CJIDHFLK","CGIDJFLK","CGJDHFLK","CGIDHFLK","CGJDHFLI","CGJDHFIK",
+  "EJICHDLK","EGICJDLK","EGJCHDLK","EGICHDLK","EGJCHDLI","EGJCHDIK",
+  "CJEDIFLK","CJEDHFLK","CEIDHFLK","CJEDHFLI","CJEDHFIK","CGEDJFLK","CGEDIFLK","CGEDJFLI","CGEDJFIK","CGEDHFLK",
+  "CGJDHFLE","CGJDHFEK","CGEDHFLI","CGEDHFIK","CGJDHFEI",
+  "HJBFIGLK","EJIBHGLK","EJBFIHLK","EJBFIGLK","EJBFHGLK","EGBFIHLK","EJBFHGLI","EJBFHGIK",
+  "HJBDIGLK","HJBDIFLK","IGBDJFLK","HGBDJFLK","HGBDIFLK","HGBDJFLI","HGBDJFIK",
+  "EJBDIHLK","EJBDIGLK","EJBDHGLK","EGBDIHLK","EJBDHGLI","EJBDHGIK",
+  "EJBDIFLK","EJBDHFLK","EIBDHFLK","EJBDHFLI","EJBDHFIK","EGBDJFLK","EGBDIFLK","EGBDJFLI","EGBDJFIK","EGBDHFLK",
+  "HGBDJFLE","HGBDJFEK","EGBDHFLI","EGBDHFIK","HGBDJFEI",
+  "HJBCIGLK","HJBCIFLK","IGBCJFLK","HGBCJFLK","HGBCIFLK","HGBCJFLI","HGBCJFIK",
+  "EJBCIHLK","EJBCIGLK","EJBCHGLK","EGBCIHLK","EJBCHGLI","EJBCHGIK",
+  "EJBCIFLK","EJBCHFLK","EIBCHFLK","EJBCHFLI","EJBCHFIK","EGBCJFLK","EGBCIFLK","EGBCJFLI","EGBCJFIK","EGBCHFLK",
+  "HGBCJFLE","HGBCJFEK","EGBCHFLI","EGBCHFIK","HGBCJFEI",
+  "HJBCIDLK","IGBCJDLK","HGBCJDLK","HGBCIDLK","HGBCJDLI","HGBCJDIK",
+  "CJBDIFLK","CJBDHFLK","CIBDHFLK","CJBDHFLI","CJBDHFIK","CGBDJFLK","CGBDIFLK","CGBDJFLI","CGBDJFIK","CGBDHFLK",
+  "CGBDHFLJ","HGBCJFDK","CGBDHFLI","CGBDHFIK","HGBCJFDI",
+  "EJBCIDLK","EJBCHDLK","EIBCHDLK","EJBCHDLI","EJBCHDIK","EGBCJDLK","EGBCIDLK","EGBCJDLI","EGBCJDIK","EGBCHDLK",
+  "HGBCJDLE","HGBCJDEK","EGBCHDLI","EGBCHDIK","HGBCJDEI",
+  "CJBDEFLK","CEBDIFLK","CJBDEFLI","CJBDEFIK","CEBDHFLK","CJBDHFLE","CJBDHFEK","CEBDHFLI","CEBDHFIK","CJBDHFEI",
+  "CGBDEFLK","CGBDJFLE","CGBDJFEK","CGBDEFLI","CGBDEFIK","CGBDJFEI","CGBDHFLE","CGBDHFEK","HGBCJFDE","CGBDHFEI",
+  "HJIFAGLK","EJIAHGLK","EJIFAHLK","EJIFAGLK","EGJFAHLK","EGIFAHLK","EGJFAHLI","EGJFAHIK",
+  "HJIDAGLK","HJIDAFLK","IGJDAFLK","HGJDAFLK","HGIDAFLK","HGJDAFLI","HGJDAFIK",
+  "EJIDAHLK","EJIDAGLK","EGJDAHLK","EGIDAHLK","EGJDAHLI","EGJDAHIK",
+  "EJIDAFLK","HJEDAFLK","HEIDAFLK","HJEDAFLI","HJEDAFIK","EGJDAFLK","EGIDAFLK","EGJDAFLI","EGJDAFIK","HGEDAFLK",
+  "HGJDAFLE","HGJDAFEK","HGEDAFLI","HGEDAFIK","HGJDAFEI",
+  "HJICAGLK","HJICAFLK","IGJCAFLK","HGJCAFLK","HGICAFLK","HGJCAFLI","HGJCAFIK",
+  "EJICAHLK","EJICAGLK","EGJCAHLK","EGICAHLK","EGJCAHLI","EGJCAHIK",
+  "EJICAFLK","HJECAFLK","HEICAFLK","HJECAFLI","HJECAFIK","EGJCAFLK","EGICAFLK","EGJCAFLI","EGJCAFIK","HGECAFLK",
+  "HGJCAFLE","HGJCAFEK","HGECAFLI","HGECAFIK","HGJCAFEI",
+  "HJICADLK","IGJCADLK","HGJCADLK","HGICADLK","HGJCADLI","HGJCADIK",
+  "CJIDAFLK","HJFCADLK","HFICADLK","HJFCADLI","HJFCADIK","CGJDAFLK","CGIDAFLK","CGJDAFLI","CGJDAFIK","HGFCADLK",
+  "CGJDAFLH","HGJCAFDK","HGFCADLI","HGFCADIK","HGJCAFDI",
+  "EJICADLK","HJECADLK","HEICADLK","HJECADLI","HJECADIK","EGJCADLK","EGICADLK","EGJCADLI","EGJCADIK","HGECADLK",
+  "HGJCADLE","HGJCADEK","HGECADLI","HGECADIK","HGJCADEI",
+  "CJEDAFLK","CEIDAFLK","CJEDAFLI","CJEDAFIK","HEFCADLK","HJFCADLE","HJECAFDK","HEFCADLI","HEFCADIK","HJECAFDI",
+  "CGEDAFLK","CGJDAFLE","CGJDAFEK","CGEDAFLI","CGEDAFIK","CGJDAFEI","HGFCADLE","HGECAFDK","HGJCAFDE","HGECAFDI",
+  "HJBAIGLK","HJBAIFLK","IJBFAGLK","HJBFAGLK","HGBAIFLK","HJBFAGLI","HJBFAGIK",
+  "EJBAIHLK","EJBAIGLK","EJBAHGLK","EGBAIHLK","EJBAHGLI","EJBAHGIK",
+  "EJBAIFLK","EJBFAHLK","EIBFAHLK","EJBFAHLI","EJBFAHIK","EJBFAGLK","EGBAIFLK","EJBFAGLI","EJBFAGIK","EGBFAHLK",
+  "HJBFAGLE","HJBFAGEK","EGBFAHLI","EGBFAHIK","HJBFAGEI",
+  "IJBDAHLK","IJBDAGLK","HJBDAGLK","IGBDAHLK","HJBDAGLI","HJBDAGIK",
+  "IJBDAFLK","HJBDAFLK","HIBDAFLK","HJBDAFLI","HJBDAFIK","FJBDAGLK","IGBDAFLK","FJBDAGLI","FJBDAGIK","HGBDAFLK",
+  "HGBDAFLJ","HGBDAFJK","HGBDAFLI","HGBDAFIK","HGBDAFIJ",
+  "EJBAIDLK","EJBDAHLK","EIBDAHLK","EJBDAHLI","EJBDAHIK","EJBDAGLK","EGBAIDLK","EJBDAGLI","EJBDAGIK","EGBDAHLK",
+  "HJBDAGLE","HJBDAGEK","EGBDAHLI","EGBDAHIK","HJBDAGEI",
+  "EJBDAFLK","EIBDAFLK","EJBDAFLI","EJBDAFIK","HEBDAFLK","HJBDAFLE","HJBDAFEK","HEBDAFLI","HEBDAFIK","HJBDAFEI",
+  "EGBDAFLK","EGBDAFLJ","EGBDAFJK","EGBDAFLI","EGBDAFIK","EGBDAFIJ","HGBDAFLE","HGBDAFEK","HGBDAFEJ","HGBDAFEI",
+  "IJBCAHLK","IJBCAGLK","HJBCAGLK","IGBCAHLK","HJBCAGLI","HJBCAGIK",
+  "IJBCAFLK","HJBCAFLK","HIBCAFLK","HJBCAFLI","HJBCAFIK","CJBFAGLK","IGBCAFLK","CJBFAGLI","CJBFAGIK","HGBCAFLK",
+  "HGBCAFLJ","HGBCAFJK","HGBCAFLI","HGBCAFIK","HGBCAFIJ",
+  "EJBAICLK","EJBCAHLK","EIBCAHLK","EJBCAHLI","EJBCAHIK","EJBCAGLK","EGBAICLK","EJBCAGLI","EJBCAGIK","EGBCAHLK",
+  "HJBCAGLE","HJBCAGEK","EGBCAHLI","EGBCAHIK","HJBCAGEI",
+  "EJBCAFLK","EIBCAFLK","EJBCAFLI","EJBCAFIK","HEBCAFLK","HJBCAFLE","HJBCAFEK","HEBCAFLI","HEBCAFIK","HJBCAFEI",
+  "EGBCAFLK","EGBCAFLJ","EGBCAFJK","EGBCAFLI","EGBCAFIK","EGBCAFIJ","HGBCAFLE","HGBCAFEK","HGBCAFEJ","HGBCAFEI",
+  "IJBCADLK","HJBCADLK","HIBCADLK","HJBCADLI","HJBCADIK","CJBDAGLK","IGBCADLK","CJBDAGLI","CJBDAGIK","HGBCADLK",
+  "HGBCADLJ","HGBCADJK","HGBCADLI","HGBCADIK","HGBCADIJ",
+  "CJBDAFLK","CIBDAFLK","CJBDAFLI","CJBDAFIK","HFBCADLK","CJBDAFLH","HJBCAFDK","HFBCADLI","HFBCADIK","HJBCAFDI",
+  "CGBDAFLK","CGBDAFLJ","CGBDAFJK","CGBDAFLI","CGBDAFIK","CGBDAFIJ","CGBDAFLH","HGBCAFDK","HGBCAFDJ","HGBCAFDI",
+  "EJBCADLK","EIBCADLK","EJBCADLI","EJBCADIK","HEBCADLK","HJBCADLE","HJBCADEK","HEBCADLI","HEBCADIK","HJBCADEI",
+  "EGBCADLK","EGBCADLJ","EGBCADJK","EGBCADLI","EGBCADIK","EGBCADIJ","HGBCADLE","HGBCADEK","HGBCADEJ","HGBCADEI",
+  "CEBDAFLK","CJBDAFLE","CJBDAFEK","CEBDAFLI","CEBDAFIK","CJBDAFEI","HFBCADLE","HEBCAFDK","HJBCAFDE","HEBCAFDI",
+  "CGBDAFLE","CGBDAFEK","CGBDAFEJ","CGBDAFEI","HGBCAFDE"
+];
+
+async function fillR32Pairings(matches, standbyKey) {
   try {
+    const key = standbyKey || API_CONFIG.ZAFRONIX_KEY;
     const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
-      headers: { 'X-API-Key': API_CONFIG.ZAFRONIX_KEY }
+      headers: { 'X-API-Key': key }
     });
     if (!res.ok) return matches;
     const data = await res.json();
@@ -1813,20 +1883,29 @@ async function fillR32Pairings(matches) {
         teams[`${letter}${row.position}`] = row.team;
       }
     }
+    const advancing = Object.entries(groups).filter(([,tbl]) =>
+      tbl.some(r => r.position === 3 && r.advanced)
+    ).map(([l]) => l).sort().join('');
+    const row = ANNEX_C_ROWS.find(r => [...r].sort().join('') === advancing) || '';
+    const annex = {};
+    row.split('').forEach((g, i) => { annex[ANNEX_C_WINNERS[i]] = g; });
     const pairings = [
-      ['A2','B2'], ['C1','F2'], ['E1','D3'], ['F1','C2'],
-      ['E2','I2'], ['I1','F3'], ['A1','E3'], ['L1','K3'],
-      ['D1','B3'], ['G1','I3'], ['K2','L2'], ['H1','J2'],
-      ['B1','J3'], ['J1','H2'], ['K1','L3'], ['D2','G2']
+      ['A2','B2'], ['C1','F2'],
+      [`E1`,`E3`],[`F1`,`C2`],
+      ['E2','I2'], [`I1`,`I3`],
+      [`A1`,`A3`],[`L1`,`L3`],
+      [`D1`,`D3`],[`G1`,`G3`],
+      ['K2','L2'], [`H1`,`J2`],
+      [`B1`,`B3`],[`J1`,`H2`],
+      [`K1`,`K3`],['D2','G2']
     ];
-    const r32Ids = matches.filter(m => m.phase === 'Treintaidosavos').map(m => m.id).sort();
     let idx = 0;
     return matches.map(m => {
       if (m.phase !== 'Treintaidosavos') return m;
-      const [homeSlot, awaySlot] = pairings[idx] || [];
-      const home = teams[homeSlot];
-      const away = teams[awaySlot];
-      idx++;
+      let [h, a] = pairings[idx++] || [];
+      h = h.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
+      a = a.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
+      const home = teams[h], away = teams[a];
       if (!home || !away) return m;
       return { ...m, homeTeam: home, awayTeam: away, homeFlag: teamFlag(home), awayFlag: teamFlag(away), tbd: false };
     });
@@ -1873,7 +1952,7 @@ async function fetchFromAPI(backup = false) {
         score:    { home: m.homeScore, away: m.awayScore }
       };
     });
-    return fillR32Pairings(matches);
+    return fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined);
   } catch (e) {
     console.error("API falló:", e.message);
     toast("Error al conectar con la API: " + e.message, "error");
