@@ -1393,13 +1393,13 @@ const firebaseConfig = {
 
 
 /* ─────────────────────────────────────────────
-   API EXTERNA — Zafronix WC API
-   Registrarse gratis en api.zafronix.com/signup
+   API EXTERNA
    ───────────────────────────────────────────── */
 const API_CONFIG = {
   ZAFRONIX_URL: "https://api.zafronix.com/fifa/worldcup/v1",
   ZAFRONIX_KEY: "zwc_free_696a6ee7acfc874b91023a75",
-  REFRESH_INTERVAL: 5 * 60 * 1000
+  ZAFRONIX_KEY_BACKUP: "zwc_free_fa0bfbba2f75ad7334adc2ab",
+  REFRESH_INTERVAL: 15 * 60 * 1000
 };
 
 /* ─────────────────────────────────────────────
@@ -1698,6 +1698,9 @@ async function loadMatches() {
   if (cached) {
     try {
       allMatches = JSON.parse(cached);
+      if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
+        fillR32Pairings(allMatches).then(filled => { allMatches = filled; renderMatches(); renderPhaseTabs(); });
+      }
       renderMatches();
       renderPhaseTabs();
     } catch(e) {}
@@ -1733,6 +1736,12 @@ function listenToMatches() {
         cacheMatches();
         const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
+        if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
+          fillR32Pairings(allMatches).then(filled => {
+            allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); recalcAllPoints();
+          });
+          return;
+        }
         renderMatches();
         renderPhaseTabs();
         recalcAllPoints();
@@ -1755,10 +1764,9 @@ async function refreshResults() {
   try {
     const fresh = await fetchFromAPI();
     if (fresh.length) {
+      allMatches = fresh; cacheMatches();
       if (db) {
         await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
-      } else {
-        allMatches = fresh; cacheMatches();
       }
     }
   } catch (e) {
@@ -1777,18 +1785,76 @@ function zafronixStageToPhase(stage) {
     'group_a':'Grupo A','group_b':'Grupo B','group_c':'Grupo C','group_d':'Grupo D',
     'group_e':'Grupo E','group_f':'Grupo F','group_g':'Grupo G','group_h':'Grupo H',
     'group_i':'Grupo I','group_j':'Grupo J','group_k':'Grupo K','group_l':'Grupo L',
-    'r32':'Treintaidosavos','r16':'Octavos de Final',
-    'qf':'Cuartos de Final','sf':'Semifinal',
-    'final':'Final 🏆','thirdPlace':'Tercer Lugar'
+    'group stage':'Fase de Grupos','groups':'Fase de Grupos',
+    'r32':'Treintaidosavos','round_of_32':'Treintaidosavos','round_32':'Treintaidosavos','last_32':'Treintaidosavos','round 32':'Treintaidosavos',
+    'r16':'Octavos de Final','round_of_16':'Octavos de Final','round_16':'Octavos de Final','last_16':'Octavos de Final',
+    'qf':'Cuartos de Final','quarterfinals':'Cuartos de Final','quarter_finals':'Cuartos de Final',
+    'sf':'Semifinal','semifinals':'Semifinal','semi_finals':'Semifinal',
+    'final':'Final 🏆','third_place':'Tercer Lugar','thirdplace':'Tercer Lugar'
   };
-  return map[stage] || stage || 'Fase de Grupos';
+  const val = (stage || '').toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+  return map[val] || map[stage] || stage || 'Fase de Grupos';
 }
 
-async function fetchFromAPI() {
+/* ─────────────────────────────────────────────
+   GENERAR CRUCES DE TREINTAIDOSAVOS
+   ───────────────────────────────────────────── */
+async function fillR32Pairings(matches) {
   try {
-    const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/matches?year=2026`, {
+    const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
       headers: { 'X-API-Key': API_CONFIG.ZAFRONIX_KEY }
     });
+    if (!res.ok) return matches;
+    const data = await res.json();
+    const groups = data.groups || {};
+    const teams = {};
+    for (const [letter, tbl] of Object.entries(groups)) {
+      for (const row of tbl) {
+        teams[`${letter}${row.position}`] = row.team;
+      }
+    }
+    const pairings = [
+      ['A2','B2'], ['C1','F2'], ['E1','D3'], ['F1','C2'],
+      ['E2','I2'], ['I1','F3'], ['A1','E3'], ['L1','K3'],
+      ['D1','B3'], ['G1','I3'], ['K2','L2'], ['H1','J2'],
+      ['B1','J3'], ['J1','H2'], ['K1','L3'], ['D2','G2']
+    ];
+    const r32Ids = matches.filter(m => m.phase === 'Treintaidosavos').map(m => m.id).sort();
+    let idx = 0;
+    return matches.map(m => {
+      if (m.phase !== 'Treintaidosavos') return m;
+      const [homeSlot, awaySlot] = pairings[idx] || [];
+      const home = teams[homeSlot];
+      const away = teams[awaySlot];
+      idx++;
+      if (!home || !away) return m;
+      return { ...m, homeTeam: home, awayTeam: away, homeFlag: teamFlag(home), awayFlag: teamFlag(away), tbd: false };
+    });
+  } catch (e) {
+    console.warn("No se pudieron generar los cruces de R32:", e.message);
+    return matches;
+  }
+}
+
+async function fetchFromAPI(backup = false) {
+  try {
+    const key = backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : API_CONFIG.ZAFRONIX_KEY;
+    const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/matches?year=2026`, {
+      headers: { 'X-API-Key': key }
+    });
+    if (res.status === 429) {
+      if (!backup && API_CONFIG.ZAFRONIX_KEY_BACKUP) {
+        console.warn("API primaria rate limit, usando key de respaldo...");
+        toast("⚠️ API primaria limitada. Usando key de respaldo...", "warn");
+        return fetchFromAPI(true);
+      }
+      const retryAfter = parseInt(res.headers.get('retry-after')) || 3600;
+      const mins = Math.ceil(retryAfter / 60);
+      console.warn(`API rate limit, esperando ${retryAfter}s...`);
+      toast(`⚠️ Límite API diario excedido. Espera ${mins} min...`, "warn");
+      await new Promise(r => setTimeout(r, retryAfter * 1000));
+      return fetchFromAPI();
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
     const data = await res.json();
     return (data.data || []).map(m => {
@@ -1807,9 +1873,10 @@ async function fetchFromAPI() {
         score:    { home: m.homeScore, away: m.awayScore }
       };
     });
+    return fillR32Pairings(matches);
   } catch (e) {
     console.error("API falló:", e.message);
-    toast("Error al conectar con la API de partidos: " + e.message, "error");
+    toast("Error al conectar con la API: " + e.message, "error");
     throw e;
   }
 }
@@ -1893,7 +1960,6 @@ function filterByPhase(btn) {
 }
 
 function isMatchToday(m) {
-  if (m.tbd) return false;
   const matchLocal = new Date(m.utcDate).toLocaleDateString('es-CO');
   const todayLocal = new Date().toLocaleDateString('es-CO');
   return matchLocal === todayLocal;
@@ -1936,7 +2002,7 @@ function renderMatchCard(m, idx) {
     feedbackHTML = `<div class="result-feedback feedback-pending">⏳ Tu pronóstico: ${pron.golesA} – ${pron.golesB}</div>`;
   }
 
-  const dateStr = m.tbd ? '—' : formatLocalDate(m.utcDate);
+  const dateStr = formatLocalDate(m.utcDate);
   const delay = Math.min(idx * 40, 400);
   const inputAttrs = `type="number" min="0" max="20" class="score-input" placeholder="0" ${isLocked ? 'disabled' : ''} oninput="this.value=Math.max(0,Math.min(20,parseInt(this.value)||0))"`;
 
@@ -1950,7 +2016,7 @@ function renderMatchCard(m, idx) {
       <div class="match-teams">
         <div class="team-side">
           <span class="team-flag">${m.homeFlag}</span>
-          <div class="team-name">${escHtml(m.homeTeam)}</div>
+          <div class="team-name">${m.homeTeam ? escHtml(m.homeTeam) : '—'}</div>
           ${!m.tbd ? `<div class="team-input-wrap">
             <input ${inputAttrs} id="hInput_${m.id}" value="${pron ? pron.golesA : ''}">
           </div>` : ''}
@@ -1960,7 +2026,7 @@ function renderMatchCard(m, idx) {
         </div>
         <div class="team-side">
           <span class="team-flag">${m.awayFlag}</span>
-          <div class="team-name">${escHtml(m.awayTeam)}</div>
+          <div class="team-name">${m.awayTeam ? escHtml(m.awayTeam) : '—'}</div>
           ${!m.tbd ? `<div class="team-input-wrap">
             <input ${inputAttrs} id="aInput_${m.id}" value="${pron ? pron.golesB : ''}">
           </div>` : ''}
@@ -2224,9 +2290,15 @@ async function adminForceSync() {
   toast("🔄 Forzando sincronización...", "info");
   try {
     const fresh = await fetchFromAPI();
-    if (fresh.length && db) {
-      await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+    if (fresh.length) {
+      allMatches = fresh;
       cacheMatches();
+      if (db) {
+        await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+      }
+      renderMatches();
+      renderPhaseTabs();
+      recalcAllPoints();
     }
   } catch (e) {
     toast("Error al sincronizar: " + e.message, "error");
