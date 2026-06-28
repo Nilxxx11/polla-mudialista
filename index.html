@@ -1699,7 +1699,9 @@ async function loadMatches() {
     try {
       allMatches = JSON.parse(cached);
       if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
-        fillR32Pairings(allMatches).then(filled => { allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); });
+        if (!db) {
+          fillR32Pairings(allMatches).then(filled => { allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); });
+        }
       } else {
         renderMatches();
         renderPhaseTabs();
@@ -1726,22 +1728,23 @@ async function loadMatches() {
 
 function listenToMatches() {
   if (!db) return;
-  db.ref('matches').on('value', snap => {
+  db.ref('matches').on('value', async snap => {
     try {
       const fbData = snap.val();
       if (fbData && fbData.data && Array.isArray(fbData.data)) {
-        allMatches = fbData.data.map(m => ({
+        let fbMatches = fbData.data.map(m => ({
           ...m,
           score: m.score || { home: null, away: null }
         }));
         const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
-        if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
-          fillR32Pairings(allMatches).then(filled => {
-            allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); recalcAllPoints();
-          });
-          return;
+        if (!fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
+          fbMatches = await fillR32Pairings(fbMatches);
         }
+        const filledOk = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
+        const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
+        if (!filledOk && currentHasR32) return;
+        allMatches = fbMatches;
         cacheMatches();
         renderMatches();
         renderPhaseTabs();
@@ -1870,10 +1873,19 @@ const ANNEX_C_ROWS = [
 
 async function fillR32Pairings(matches, standbyKey) {
   try {
-    const key = standbyKey || API_CONFIG.ZAFRONIX_KEY;
-    const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
+    const primaryKey = API_CONFIG.ZAFRONIX_KEY;
+    const backupKey = API_CONFIG.ZAFRONIX_KEY_BACKUP;
+    let key = standbyKey || primaryKey;
+    let res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
       headers: { 'X-API-Key': key }
     });
+    if (res.status === 429 && !standbyKey && backupKey) {
+      console.warn("Standings API rate limited, using backup key...");
+      key = backupKey;
+      res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
+        headers: { 'X-API-Key': key }
+      });
+    }
     if (!res.ok) return matches;
     const data = await res.json();
     const groups = data.groups || {};
