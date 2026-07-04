@@ -1852,8 +1852,8 @@ function listenToMatches() {
             }
           } catch(e) { console.warn("Fallback fetch failed:", e.message); }
         }
-        const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
-        const currentHasKO = !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        const currentHasR32 = allMatches.length > 0 && allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
+        const currentHasKO = allMatches.length > 0 && !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if (neededR32 && !filledR32 && currentHasR32) return;
         if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
         const filledKO = neededKO && !stillNeedsKO;
