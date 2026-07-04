@@ -1390,7 +1390,8 @@ body {
       <div class="admin-grid">
         <div class="admin-card">
           <div class="admin-card-title"><span>🔄</span> Sincronización</div>
-          <button class="btn-admin" onclick="adminForceSync()">🔄 Forzar sincronización con API</button>
+          <button class="btn-admin" onclick="adminForceSync()">📡 Sincronizar desde Internet</button>
+          <div style="margin-top:0.5rem;font-size:0.7rem;color:var(--orange)">⚠️ Fuentes: ESPN → API Zafronix. Si fallan, usa "Gestión de Partidos".</div>
           <button class="btn-admin" onclick="adminClearCache()">🗑️ Limpiar caché de partidos</button>
           <button class="btn-admin" onclick="adminMigrateKeys()">🔧 Normalizar emails existentes</button>
           <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-sub)" id="adminSyncStatus">—</div>
@@ -1403,6 +1404,12 @@ body {
         <div class="admin-card">
           <div class="admin-card-title"><span>👥</span> Resumen Participantes</div>
           <div id="adminParticipantsInfo" style="font-size:0.85rem;color:var(--text-sub)">Cargando...</div>
+        </div>
+        <div class="admin-card" style="grid-column:1/-1">
+          <div class="admin-card-title"><span>⚽</span> Gestión de Partidos</div>
+          <div style="max-height:420px;overflow-y:auto;font-size:0.8rem" id="adminMatchesWrap">
+            <div style="padding:0.5rem;color:var(--text-sub)">Cargando partidos...</div>
+          </div>
         </div>
         <div class="admin-card" style="grid-column:1/-1">
           <div class="admin-card-title"><span>🔑</span> Gestión de Usuarios</div>
@@ -1511,13 +1518,13 @@ let myPronosticos= {};
 let allUsers     = {};
 let currentFilter= 'all';
 let currentPhase = 'all';
-let refreshTimer = null;
 let isAdmin      = false;
 let isActivo     = false;
 let apiLimited   = false;
 let pointsModalShown = false;
 let lastMatchesJson = '';
 let lastLeaderboardJson = '';
+let lastRankingJson = '';
 let matchRenderQueued = false;
 
 /* ══════════════════════════════════════════════
@@ -1651,7 +1658,6 @@ async function logout() {
 function showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appScreen').classList.remove('visible');
-  clearInterval(refreshTimer);
   /* Limpiar estado admin al cerrar sesión */
   const t = document.getElementById('adminTab');
   if (t) t.classList.add('hidden');
@@ -1749,9 +1755,6 @@ async function onUserLoggedIn(user) {
   listenToPronosticos();
   listenToLeaderboard();
 
-  /* Refresco automático */
-  refreshTimer = setInterval(refreshResults, API_CONFIG.REFRESH_INTERVAL);
-
   /* Mostrar sistema de puntos al ingresar (solo una vez por sesión) */
   if (!pointsModalShown) {
     pointsModalShown = true;
@@ -1802,12 +1805,10 @@ async function loadMatches() {
   }
 
   if (db) {
-    /* Escuchar Firebase para actualizaciones en tiempo real */
     listenToMatches();
   } else {
-    /* Sin Firebase, usar API directamente */
     try {
-      const fresh = await fetchFromAPI();
+      const fresh = await syncFromInternet();
       if (fresh.length) { allMatches = fresh; cacheMatches(); }
       setSyncStatus("Sincronizado • " + new Date().toLocaleTimeString('es-CO'));
     } catch (e) {
@@ -1816,6 +1817,28 @@ async function loadMatches() {
     renderMatches();
     renderPhaseTabs();
   }
+
+  /* Corrección silenciosa de fechas desde ESPN (se ejecuta después de cargar datos) */
+  setTimeout(async () => {
+    try {
+      const espn = await fetchFromESPN();
+      if (espn.length < 100) return;
+      let changed = false;
+      const norm = n => n?.toLowerCase().replace(/[^a-záéíóúñü0-9]/g,'');
+      allMatches = allMatches.map(m => {
+        const espnMatch = espn.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
+        if (!espnMatch) return m;
+        if (espnMatch.utcDate && espnMatch.utcDate !== m.utcDate) { changed = true; return { ...m, utcDate: espnMatch.utcDate }; }
+        return m;
+      });
+      if (changed) {
+        cacheMatches();
+        if (db) await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
+        renderMatches();
+        renderPhaseTabs();
+      }
+    } catch(e) { /* silencioso */ }
+  }, 3000);
 }
 
 function listenToMatches() {
@@ -1844,7 +1867,7 @@ function listenToMatches() {
         let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
           try {
-            const fresh = await fetchFromAPI();
+            const fresh = await syncFromInternet();
             if (fresh.length) {
               fbMatches = fresh;
               filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
@@ -1867,7 +1890,7 @@ function listenToMatches() {
         renderPhaseTabs();
         recalcAllPoints();
       } else {
-        fetchFromAPI().then(fresh => {
+        syncFromInternet().then(fresh => {
           if (fresh.length) {
             db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
           }
@@ -1886,7 +1909,7 @@ async function refreshResults(showToast) {
   if (showToast) toast("🔄 Actualizando partidos...", "info");
 
   try {
-    const fresh = await fetchFromAPI();
+    const fresh = await syncFromInternet();
       if (fresh.length) {
         allMatches = fresh; cacheMatches();
         if (db) {
@@ -2001,8 +2024,9 @@ async function fillR32Pairings(matches, standbyKey) {
     let res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
       headers: { 'X-API-Key': key }
     });
-    if (res.status === 429 && !standbyKey && backupKey) {
-      console.warn("Standings API rate limited, using backup key...");
+    if ((res.status === 429 || res.status === 403) && !standbyKey && backupKey) {
+      if (res.status === 403) console.warn("Standings API key suspendida, usando respaldo...");
+      else console.warn("Standings API rate limited, using backup key...");
       key = backupKey;
       res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
         headers: { 'X-API-Key': key }
@@ -2059,22 +2083,15 @@ async function fillR32Pairings(matches, standbyKey) {
 function fillKnockoutBracket(matches) {
   const roundRobin = ['Fase de Grupos', 'Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E', 'Grupo F',
     'Grupo G', 'Grupo H', 'Grupo I', 'Grupo J', 'Grupo K', 'Grupo L'];
-  const matchNum = m => parseInt((m.id||'').replace(/^.*-/, '')) || 0;
-  const byId = (a, b) => matchNum(a) - matchNum(b);
-  const winn = m => {
-    if (m.status !== 'FINISHED' || m.score.home === null) return null;
-    if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.homeTeam : m.awayTeam;
-    if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
-      return m.score.pen > m.score.pen2 ? m.homeTeam : m.awayTeam;
-    return null;
-  };
-  const lose = m => {
-    if (m.status !== 'FINISHED' || m.score.home === null) return null;
-    if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.awayTeam : m.homeTeam;
-    if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
-      return m.score.pen > m.score.pen2 ? m.awayTeam : m.homeTeam;
-    return null;
-  };
+    const matchNum = m => parseInt((m.id||'').replace(/^.*-/, '')) || 0;
+    const byId = (a, b) => matchNum(a) - matchNum(b);
+    const lose = m => {
+      if (m.status !== 'FINISHED' || m.score.home === null) return null;
+      if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.awayTeam : m.homeTeam;
+      if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
+        return m.score.pen > m.score.pen2 ? m.awayTeam : m.homeTeam;
+      return null;
+    };
 
   const r32 = matches.filter(m => m.phase === 'Treintaidosavos').sort(byId);
   const r16 = matches.filter(m => m.phase === 'Octavos de Final').sort(byId);
@@ -2102,17 +2119,17 @@ function fillKnockoutBracket(matches) {
   /* R32 → R16 */
   for (let i = 0; i < r32to16.length && i < r16.length; i++) {
     const [ha, aa] = r32to16[i];
-    setTeams(r16, i, winn(r32[ha]), winn(r32[aa]));
+    setTeams(r16, i, matchWinner(r32[ha]), matchWinner(r32[aa]));
   }
   /* R16 → QF */
   for (let i = 0; i < r16toQF.length && i < qf.length; i++) {
     const [ha, aa] = r16toQF[i];
-    setTeams(qf, i, winn(r16[ha]), winn(r16[aa]));
+    setTeams(qf, i, matchWinner(r16[ha]), matchWinner(r16[aa]));
   }
   /* QF → SF */
   for (let i = 0; i < qfToSF.length && i < sf.length; i++) {
     const [ha, aa] = qfToSF[i];
-    setTeams(sf, i, winn(qf[ha]), winn(qf[aa]));
+    setTeams(sf, i, matchWinner(qf[ha]), matchWinner(qf[aa]));
   }
   /* SF → 3rd place (losers) */
   if (third.length && sf.length >= 2) {
@@ -2120,7 +2137,7 @@ function fillKnockoutBracket(matches) {
   }
   /* SF → Final (winners) */
   if (fin.length && sf.length >= 2) {
-    setTeams(fin, 0, winn(sf[0]), winn(sf[1]));
+    setTeams(fin, 0, matchWinner(sf[0]), matchWinner(sf[1]));
   }
 
   /* Fallback: resolución por referencia W/L para rondas donde el bracket no alcanzó */
@@ -2175,21 +2192,24 @@ async function fetchFromAPI(backup = false) {
     const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/matches?year=2026`, {
       headers: { 'X-API-Key': key }
     });
-    if (res.status === 429) {
+    if (res.status === 429 || res.status === 403) {
       if (!backup && API_CONFIG.ZAFRONIX_KEY_BACKUP) {
-        console.warn("API primaria rate limit, usando key de respaldo...");
-        toast("⚠️ API primaria limitada. Usando key de respaldo...", "warn");
+        if (res.status === 403) console.warn("API primaria suspendida, usando key de respaldo...");
+        else console.warn("API primaria rate limit, usando key de respaldo...");
         return fetchFromAPI(true);
       }
-      const retryAfter = parseInt(res.headers.get('retry-after')) || 3600;
-      setApiLimited(true);
-      const mins = Math.ceil(retryAfter / 60);
-      console.warn(`API rate limit, esperando ${retryAfter}s...`);
-      toast(`⚠️ Límite API diario excedido. Espera ${mins} min...`, "warn");
-      setSyncStatus(`⚠️ API limitada — reintentando en ${mins}min...`);
-      await new Promise(r => setTimeout(r, retryAfter * 1000));
-      setApiLimited(false);
-      return fetchFromAPI(true);
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('retry-after')) || 3600;
+        setApiLimited(true);
+        const mins = Math.ceil(retryAfter / 60);
+        console.warn(`API rate limit, esperando ${retryAfter}s...`);
+        toast(`⚠️ Límite API diario excedido. Espera ${mins} min...`, "warn");
+        setSyncStatus(`⚠️ API limitada — reintentando en ${mins}min...`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        setApiLimited(false);
+        return fetchFromAPI(true);
+      }
+      throw new Error(`API key sin acceso (HTTP ${res.status})`);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
     const data = await res.json();
@@ -2212,9 +2232,88 @@ async function fetchFromAPI(backup = false) {
     return fillKnockoutBracket(await fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined));
   } catch (e) {
     console.error("API falló:", e.message);
-    toast("Error al conectar con la API: " + e.message, "error");
     throw e;
   }
+}
+
+/* ─── Fuente alternativa: ESPN (sin API key) ─── */
+const ESPN_TEAM_MAP = {
+  'South Korea':'Korea Republic','Bosnia-Herzegovina':'Bosnia and Herzegovina',
+  'Ivory Coast':"Côte d'Ivoire",'Congo DR':'DR Congo','United States':'USA',
+  'Türkiye':'Türkiye','Czechia':'Czech Republic'
+};
+const ESPN_PHASE_MAP = {
+  'group-stage':'Fase de Grupos','round-of-32':'Treintaidosavos','round-of-16':'Octavos de Final',
+  'quarterfinals':'Cuartos de Final','semifinals':'Semifinal','3rd-place-match':'Tercer Lugar','final':'Final 🏆'
+};
+
+async function fetchFromESPN() {
+  const url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719&limit=500';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('ESPN responded ' + res.status);
+  const data = await res.json();
+  return (data.events || []).map(e => {
+    const comp = (e.competitions || [])[0] || {};
+    const competitors = comp.competitors || [];
+    const homeData = competitors.find(c => c.homeAway === 'home') || {};
+    const awayData = competitors.find(c => c.homeAway === 'away') || {};
+    const homeName = ESPN_TEAM_MAP[homeData.team?.displayName] || homeData.team?.displayName || 'TBD';
+    const awayName = ESPN_TEAM_MAP[awayData.team?.displayName] || awayData.team?.displayName || 'TBD';
+    const isTbd = /^(Round of 16|Quarterfinal|Semifinal) \d/.test(homeName) || /^(Round of 16|Quarterfinal|Semifinal) \d/.test(awayName);
+    const hScore = homeData.score != null ? parseInt(homeData.score) : null;
+    const aScore = awayData.score != null ? parseInt(awayData.score) : null;
+    const finished = comp.status?.type?.state === 'post';
+    const inPlay = comp.status?.type?.state === 'in';
+    const status = finished ? 'FINISHED' : inPlay ? 'IN_PLAY' : 'SCHEDULED';
+    const slug = e.season?.slug || 'group-stage';
+    return {
+      id:          e.id,
+      homeTeam:    isTbd ? 'TBD' : homeName,
+      awayTeam:    isTbd ? 'TBD' : awayName,
+      homeFlag:    isTbd ? '🏳' : teamFlag(homeName),
+      awayFlag:    isTbd ? '🏳' : teamFlag(awayName),
+      utcDate:     e.date || comp.date,
+      status:      status,
+      phase:       ESPN_PHASE_MAP[slug] || 'Fase de Grupos',
+      tbd:         isTbd,
+      score:       { home: hScore, away: aScore, pen: null, pen2: null }
+    };
+  });
+}
+
+/* ─── Unifica datos desde múltiples fuentes ─── */
+async function syncFromInternet() {
+  const errors = [];
+  /* 1. Intentar ESPN (gratuito, sin key) */
+  try {
+    const espn = await fetchFromESPN();
+    if (espn.length >= 100) return applyScores(espn);
+  } catch(e) { errors.push('ESPN: ' + e.message); }
+  /* 2. Fallback: Zafronix API */
+  try {
+    const api = await fetchFromAPI();
+    if (api.length) return api;
+  } catch(e) { errors.push('API: ' + e.message); }
+  throw new Error('Todas las fuentes fallaron:\n' + errors.join('\n'));
+}
+
+function applyScores(source) {
+  if (!allMatches.length) return source;
+  const norm = n => n?.toLowerCase().replace(/[^a-záéíóúñü0-9]/g,'');
+  const updated = allMatches.map(m => {
+    const espn = source.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
+    if (!espn) return m;
+    const updatedDate = espn.utcDate || m.utcDate;
+    if (!espn.score || espn.score.home === null) {
+      if (updatedDate !== m.utcDate) return { ...m, utcDate: updatedDate };
+      return m;
+    }
+    const h = espn.score.home, a = espn.score.away;
+    const old = m.score;
+    if (old && old.home === h && old.away === a && m.status === 'FINISHED' && updatedDate === m.utcDate) return m;
+    return { ...m, utcDate: updatedDate, score: { home: h, away: a, pen: m.score?.pen ?? null, pen2: m.score?.pen2 ?? null }, status: 'FINISHED' };
+  });
+  return updated;
 }
 
 function cacheMatches() {
@@ -2482,7 +2581,6 @@ function listenToLeaderboard() {
   if (!db) return;
   db.ref('users').on('value', usersSnap => {
     allUsers = usersSnap.val() || {};
-    /* Update isActivo in real-time if admin toggles current user */
     if (currentUser) {
       const myData = allUsers[sanitizeKey(currentUser.email)];
       if (myData && myData.activo !== undefined) {
@@ -2496,11 +2594,43 @@ function listenToLeaderboard() {
     }
   });
 
-  db.ref('pronosticos').on('value', snap => {
+  /* Fuente 1: ranking precalculado */
+  db.ref('ranking').on('value', rs => {
+    const r = rs.val();
+    if (r && r.data && r.data.length) {
+      renderLeaderboard(r.data);
+      updateMyStats(r.data);
+    }
+  });
+
+  /* Fuente 2: si podemos leer todos los pronósticos, calculamos y guardamos */
+  db.ref('pronosticos').once('value', snap => {
     const allProns = snap.val() || {};
     const ranking = buildRanking(allProns);
-    renderLeaderboard(ranking);
-    updateMyStats(ranking);
+    if (ranking.length) {
+      renderLeaderboard(ranking);
+      updateMyStats(ranking);
+      if (db && ranking.length) storeRanking(ranking);
+    }
+  }, async () => {
+    /* No podemos leer todos — leer solo los accesibles */
+    const usersSnap = await db.ref('users').once('value');
+    const users = usersSnap.val() || {};
+    allUsers = users;
+    const entries = await Promise.all(Object.keys(users).map(async emailKey => {
+      try {
+        const snap = await db.ref(`pronosticos/${emailKey}`).once('value');
+        return [emailKey, snap.val() || {}];
+      } catch { return null; }
+    }));
+    const allProns = {};
+    for (const e of entries) { if (e) allProns[e[0]] = e[1]; }
+    const ranking = buildRanking(allProns);
+    if (ranking.length || !document.getElementById('leaderboardList').innerHTML.includes('lb-row')) {
+      renderLeaderboard(ranking);
+      updateMyStats(ranking);
+    }
+    if (db && isAdmin && ranking.length) storeRanking(ranking);
   });
 }
 
@@ -2679,10 +2809,11 @@ function computeStats(allProns) {
    ══════════════════════════════════════════════ */
 async function adminForceSync() {
   if (!isAdmin) return;
-  toast("🔄 Forzando sincronización...", "info");
+  toast("🔄 Buscando datos en internet...", "info");
   try {
-    const fresh = await fetchFromAPI();
+    const fresh = await syncFromInternet();
     if (fresh.length) {
+      const prev = allMatches.map(m => m.score?.home + '-' + m.score?.away + m.status);
       allMatches = fresh;
       cacheMatches();
       if (db) {
@@ -2691,11 +2822,16 @@ async function adminForceSync() {
       renderMatches();
       renderPhaseTabs();
       recalcAllPoints();
+      const updatedCount = allMatches.filter((m,i) => {
+        const old = prev[i];
+        return old !== (m.score?.home + '-' + m.score?.away + m.status);
+      }).length;
+      toast(`✅ ${updatedCount} marcadores actualizados`, "success");
     }
   } catch (e) {
     toast("Error al sincronizar: " + e.message, "error");
   }
-  document.getElementById('adminSyncStatus').textContent = '✅ Sincronización forzada — ' + new Date().toLocaleString('es-CO');
+  document.getElementById('adminSyncStatus').textContent = '✅ Última sincronización — ' + new Date().toLocaleString('es-CO');
 }
 
 function adminClearCache() {
@@ -2703,6 +2839,61 @@ function adminClearCache() {
   localStorage.removeItem(CACHE_TIME);
   document.getElementById('adminSyncStatus').textContent = '🗑️ Caché borrado — ' + new Date().toLocaleTimeString('es-CO');
   toast("Caché limpiado", "success");
+}
+
+function renderAdminMatches() {
+  const wrap = document.getElementById('adminMatchesWrap');
+  if (!wrap || !allMatches.length) { wrap.innerHTML = '<div style="padding:0.5rem;color:var(--text-sub)">Sin partidos cargados</div>'; return; }
+  const phases = [...new Set(allMatches.map(m => m.phase))].sort((a,b) => {
+    const order = ['Grupo A','Grupo B','Grupo C','Grupo D','Grupo E','Grupo F','Grupo G','Grupo H','Grupo I','Grupo J','Grupo K','Grupo L','Fase de Grupos','Treintaidosavos','Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+  let html = '';
+  for (const phase of phases) {
+    const matches = allMatches.filter(m => m.phase === phase);
+    html += `<div class="admin-phases-header">${phase} (${matches.length})</div>`;
+    for (const m of matches) {
+      const hScore = m.score?.home ?? '';
+      const aScore = m.score?.away ?? '';
+      const fin = m.status === 'FINISHED';
+      html += `<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-bottom:1px solid var(--gray-100)">
+        <span style="flex:0 0 100px;font-size:0.72rem;color:var(--text-sub)">${m.id}</span>
+        <span style="flex:1;text-align:right;font-size:0.78rem">${m.homeFlag} ${escHtml(m.homeTeam)}</span>
+        <input class="admin-score-input" id="admH_${m.id}" type="number" min="0" max="20" value="${hScore}" ${m.tbd?'disabled':''}>
+        <span style="font-size:0.75rem;color:var(--text-sub)">:</span>
+        <input class="admin-score-input" id="admA_${m.id}" type="number" min="0" max="20" value="${aScore}" ${m.tbd?'disabled':''}>
+        <span style="flex:1;font-size:0.78rem">${escHtml(m.awayTeam)} ${m.awayFlag}</span>
+        <span style="flex:0 0 60px;font-size:0.65rem;color:${fin?'var(--green)':'var(--text-sub)'}">${fin?'✅'+m.status.slice(0,3):'🕒'}</span>
+        <button class="admin-score-save" id="admBtn_${m.id}" onclick="adminSaveMatchScore('${escHtml(m.id).replace(/'/g,"\\'")}')" ${m.tbd?'disabled':''}>Guardar</button>
+      </div>`;
+    }
+  }
+  wrap.innerHTML = html;
+}
+
+async function adminSaveMatchScore(matchId) {
+  if (!isAdmin || !db) return;
+  const hEl = document.getElementById('admH_'+matchId);
+  const aEl = document.getElementById('admA_'+matchId);
+  const btn = document.getElementById('admBtn_'+matchId);
+  const hVal = parseInt(hEl?.value) || 0;
+  const aVal = parseInt(aEl?.value) || 0;
+  if (isNaN(hVal) || isNaN(aVal)) { toast("Scores inválidos", "error"); return; }
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    const idx = allMatches.findIndex(m => m.id === matchId);
+    if (idx < 0) { toast("Partido no encontrado", "error"); return; }
+    allMatches[idx] = { ...allMatches[idx], score: { home: hVal, away: aVal }, status: 'FINISHED' };
+    await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
+    renderMatches();
+    recalcAllPoints();
+    btn.textContent = '✅';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Guardar'; }, 2000);
+    toast("✅ " + allMatches[idx].homeTeam + " " + hVal + "–" + aVal + " " + allMatches[idx].awayTeam, "success");
+  } catch(e) {
+    btn.disabled = false; btn.textContent = 'Guardar';
+    toast("Error: " + e.message, "error");
+  }
 }
 
 function adminConfirmReset() {
@@ -2820,6 +3011,7 @@ function renderAdminPage() {
     }
     document.getElementById('adminTableBody').innerHTML = rows || `<tr><td colspan="6" style="color:var(--text-sub);padding:1rem">Sin pronósticos aún</td></tr>`;
     loadAdminUsers();
+    renderAdminMatches();
   }).catch(err => {
     console.error('Error en renderAdminPage:', err);
     showError('Error al cargar datos: ' + err.message);
@@ -2889,6 +3081,21 @@ async function toggleActivo(emailKey, activo) {
   }
 }
 
+function matchWinner(m) {
+  if (!m || m.status !== 'FINISHED' || m.score.home === null) return null;
+  if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.homeTeam : m.awayTeam;
+  if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
+    return m.score.pen > m.score.pen2 ? m.homeTeam : m.awayTeam;
+  return null;
+}
+
+function storeRanking(ranking) {
+  const rj = JSON.stringify(ranking);
+  if (rj === lastRankingJson) return;
+  lastRankingJson = rj;
+  db.ref('ranking').set({ data: ranking, updated: Date.now() }).catch(() => {});
+}
+
 /* ══════════════════════════════════════════════
    PUNTUACIÓN
    ══════════════════════════════════════════════ */
@@ -2901,7 +3108,7 @@ function calcPoints(pron, score, match) {
 
   /* Knockout: scoring con desempate */
   if (match && isKnockoutPhase(match.phase)) {
-    const winner = winn(match);
+    const winner = matchWinner(match);
     const predWin = gA>gB?'H':gA<gB?'A':'D';
     const realWin = rA>rB?'H':rA<rB?'A':'D';
     /* Si el usuario no eligió clasifica pero puso un ganador, se infiere */
@@ -2934,6 +3141,24 @@ function recalcAllPoints() {
     const ranking = buildRanking(all);
     renderLeaderboard(ranking);
     updateMyStats(ranking);
+    if (isAdmin && ranking.length) storeRanking(ranking);
+  }, async () => {
+    /* Lectura global denegada — leer individualmente */
+    const usersSnap = await db.ref('users').once('value');
+    const users = usersSnap.val() || {};
+    allUsers = users;
+    const entries = await Promise.all(Object.keys(users).map(async emailKey => {
+      try {
+        const snap = await db.ref(`pronosticos/${emailKey}`).once('value');
+        return [emailKey, snap.val() || {}];
+      } catch { return null; }
+    }));
+    const allProns = {};
+    for (const e of entries) { if (e) allProns[e[0]] = e[1]; }
+    const ranking = buildRanking(allProns);
+    renderLeaderboard(ranking);
+    updateMyStats(ranking);
+    if (db && isAdmin && ranking.length) storeRanking(ranking);
   });
 }
 
@@ -3058,7 +3283,7 @@ function navigate(page, btn) {
   if (btn) btn.classList.add('active');
 
   if (page === 'leaderboard' && db) {
-    db.ref('pronosticos').once('value', snap=>{ renderLeaderboard(buildRanking(snap.val()||{})); });
+    recalcAllPoints();
   }
   if (page === 'stats')  renderStatsPage();
   if (page === 'admin')  renderAdminPage();
