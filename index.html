@@ -595,6 +595,7 @@ body {
 .stat-divider { width: 1px; background: var(--border-subtle); align-self: stretch; }
 .stat-sync-info { margin-left: auto; font-size: 0.72rem; color: var(--text-sub); display: flex; align-items: center; gap: 6px; }
 .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+.sync-dot.limited { background: #E74C3C; animation: none; }
 @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
 /* ═══════════════════════════════════════════════════════
@@ -770,6 +771,60 @@ body {
 }
 .pronostico-actions-row .btn-save { margin-left: 0; white-space: nowrap; flex-shrink: 0; }
 .pronostico-actions-row .result-feedback { margin-top: 0; flex: 1; }
+
+/* Qualifier row */
+.qualifier-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.qualifier-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-sub);
+  letter-spacing: 0.5px;
+}
+.qualifier-btns {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1;
+}
+.qual-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qual-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card-bg));
+}
+.qual-btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--card-bg));
+  color: var(--accent);
+}
+.qual-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.qual-flag { font-size: 1rem; line-height: 1; }
 
 /* ═══ RESULT FEEDBACK ═══ */
 .result-feedback {
@@ -1097,6 +1152,15 @@ body {
           <td style="text-align:right"><span class="pts-badge">0 pts</span></td>
         </tr>
       </table>
+      <div style="margin:0.75rem 0;padding:0.5rem;background:color-mix(in srgb, var(--gold) 10%, transparent);border-radius:8px;font-size:0.78rem">
+        <strong style="color:var(--gold)">⚡ Octavos en adelante:</strong> si pronosticas empate, activa el botón <strong>"Quién clasifica"</strong> para puntos extra.
+      </div>
+      <table class="points-table">
+        <tr><td><span class="points-icon">🎯🏆</span></td><td><strong>Exacto + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto + equipo que avanza correcto</span></td><td style="text-align:right"><span class="pts-badge">+5 pts</span></td></tr>
+        <tr><td><span class="points-icon">🎯❌</span></td><td><strong>Exacto + Clasifica mal</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto pero equipo que avanza incorrecto</span></td><td style="text-align:right"><span class="pts-badge">+4 pts</span></td></tr>
+        <tr><td><span class="points-icon">✅🤝</span></td><td><strong>Empate correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Pronosticaste empate y el partido terminó empatado</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
+        <tr><td><span class="points-icon">💪</span></td><td><strong>Clasifica correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste el resultado pero sí quién avanzó</span></td><td style="text-align:right"><span class="pts-badge">+1 pt</span></td></tr>
+      </table>
       <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
         💡 Los pronósticos se bloquean 1 hora antes del inicio del partido. ¡No olvides pronosticar antes!
       </div>
@@ -1416,9 +1480,18 @@ const ADMIN_EMAILS = [
    SISTEMA DE PUNTUACIÓN
    ───────────────────────────────────────────── */
 const SCORING = {
-  EXACT_SCORE: 5,   // Resultado exacto
-  CORRECT_WINNER: 2 // Solo ganador / empate correcto
+  EXACT_SCORE: 5,
+  CORRECT_WINNER: 2,
+  /* Knockout con desempate */
+  EXACT_QUALIFIER: 5,  // Marcador exacto + clasifica correcto
+  EXACT_MISS_QUAL: 4,  // Marcador exacto + clasifica mal
+  DRAW_TREND: 2,       // Empate (cualquier score) + empate real
+  CONSOLATION: 1       // Resultado malo + clasifica correcto
 };
+
+function isKnockoutPhase(phase) {
+  return /Octavos|Cuartos|Semifinal|Tercer|Final/i.test(phase);
+}
 
 /* ══════════════════════════════════════════════
    ESTADO GLOBAL
@@ -1433,6 +1506,7 @@ let currentPhase = 'all';
 let refreshTimer = null;
 let isAdmin      = false;
 let isActivo     = false;
+let apiLimited   = false;
 
 /* ══════════════════════════════════════════════
    INIT FIREBASE
@@ -1698,9 +1772,9 @@ async function loadMatches() {
   if (cached) {
     try {
       allMatches = JSON.parse(cached);
-      if (!allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam)) {
+      if (allMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd)) {
         if (!db) {
-          fillR32Pairings(allMatches).then(filled => { allMatches = filled; cacheMatches(); renderMatches(); renderPhaseTabs(); });
+          fillR32Pairings(allMatches).then(filled => { allMatches = fillKnockoutBracket(filled); cacheMatches(); renderMatches(); renderPhaseTabs(); });
         }
       } else {
         renderMatches();
@@ -1738,17 +1812,25 @@ function listenToMatches() {
         }));
         const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
-        const neededFill = !fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
+        const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
         let filledR32 = false;
-        if (neededFill) {
+        if (neededR32) {
           fbMatches = await fillR32Pairings(fbMatches);
-          filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
+          filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
         }
-        const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && m.homeTeam);
-        if (neededFill && !filledR32 && currentHasR32) return;
+        const neededKO = fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if (neededKO || neededR32) {
+          fbMatches = fillKnockoutBracket(fbMatches);
+        }
+        const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
+        const currentHasKO = !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if (neededR32 && !filledR32 && currentHasR32) return;
+        if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
+        const stillNeedsKO = fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        const filledKO = neededKO && !stillNeedsKO;
         allMatches = fbMatches;
         cacheMatches();
-        if (filledR32 && db) {
+        if ((filledR32 || filledKO) && db) {
           await db.ref('matches').set({ data: fbMatches, updated: new Date().toISOString() });
         }
         renderMatches();
@@ -1891,7 +1973,10 @@ async function fillR32Pairings(matches, standbyKey) {
         headers: { 'X-API-Key': key }
       });
     }
-    if (!res.ok) return matches;
+    if (!res.ok) {
+      if (res.status === 429) setApiLimited(true);
+      return matches;
+    }
     const data = await res.json();
     const groups = data.groups || {};
     const teams = {};
@@ -1907,19 +1992,22 @@ async function fillR32Pairings(matches, standbyKey) {
     const annex = {};
     row.split('').forEach((g, i) => { annex[ANNEX_C_WINNERS[i]] = g; });
     const pairings = [
-      ['A2','B2'], ['C1','F2'],
-      [`E1`,`E3`],[`F1`,`C2`],
-      ['E2','I2'], [`I1`,`I3`],
-      [`A1`,`A3`],[`L1`,`L3`],
-      [`D1`,`D3`],[`G1`,`G3`],
-      ['K2','L2'], [`H1`,`J2`],
-      [`B1`,`B3`],[`J1`,`H2`],
-      [`K1`,`K3`],['D2','G2']
+      ['A2','B2'], [`E1`,`E3`], [`F1`,`C2`], [`C1`,`F2`],
+      [`I1`,`I3`], ['E2','I2'], [`A1`,`A3`], [`L1`,`L3`],
+      [`D1`,`D3`], [`G1`,`G3`], ['K2','L2'], [`H1`,`J2`],
+      [`B1`,`B3`], [`J1`,`H2`], [`K1`,`K3`], ['D2','G2']
     ];
     let idx = 0;
+    /* Sort R32 matches by match ID so pairings align regardless of API order */
+    const r32Sorted = matches.filter(m => m.phase === 'Treintaidosavos')
+      .sort((a,b) => (parseInt((a.id||'').replace(/^.*-/,''))||0) - (parseInt((b.id||'').replace(/^.*-/,''))||0));
+    const r32Map = {};
+    r32Sorted.forEach(m => { r32Map[m.id] = idx++; });
     return matches.map(m => {
       if (m.phase !== 'Treintaidosavos') return m;
-      let [h, a] = pairings[idx++] || [];
+      const pi = r32Map[m.id];
+      if (pi === undefined) return m;
+      let [h, a] = pairings[pi] || [];
       h = h.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
       a = a.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
       const home = teams[h], away = teams[a];
@@ -1930,6 +2018,120 @@ async function fillR32Pairings(matches, standbyKey) {
     console.warn("No se pudieron generar los cruces de R32:", e.message);
     return matches;
   }
+}
+
+/* ─── Resolver bracket knockout completo ─── */
+function fillKnockoutBracket(matches) {
+  const roundRobin = ['Fase de Grupos', 'Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E', 'Grupo F',
+    'Grupo G', 'Grupo H', 'Grupo I', 'Grupo J', 'Grupo K', 'Grupo L'];
+  const matchNum = m => parseInt((m.id||'').replace(/^.*-/, '')) || 0;
+  const byId = (a, b) => matchNum(a) - matchNum(b);
+  const winn = m => {
+    if (m.status !== 'FINISHED' || m.score.home === null) return null;
+    if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.homeTeam : m.awayTeam;
+    if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
+      return m.score.pen > m.score.pen2 ? m.homeTeam : m.awayTeam;
+    return null;
+  };
+  const lose = m => {
+    if (m.status !== 'FINISHED' || m.score.home === null) return null;
+    if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.awayTeam : m.homeTeam;
+    if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
+      return m.score.pen > m.score.pen2 ? m.awayTeam : m.homeTeam;
+    return null;
+  };
+
+  const r32 = matches.filter(m => m.phase === 'Treintaidosavos').sort(byId);
+  const r16 = matches.filter(m => m.phase === 'Octavos de Final').sort(byId);
+  const qf  = matches.filter(m => m.phase === 'Cuartos de Final').sort(byId);
+  const sf  = matches.filter(m => m.phase === 'Semifinal').sort(byId);
+  const third = matches.filter(m => m.phase === 'Tercer Lugar').sort(byId);
+  const fin = matches.filter(m => m.phase === 'Final 🏆').sort(byId);
+
+  /* R32 index → R16 index mapping (confirmed from FIFA bracket) */
+  const r32to16 = [[0,2],[1,4],[3,5],[6,7],[10,11],[8,9],[13,15],[12,14]];
+  const r16toQF = [[0,1],[4,5],[2,3],[6,7]];
+  const qfToSF  = [[0,1],[2,3]];
+
+  let filled = false;
+  const setTeams = (phaseArr, idx, hw, aw) => {
+    if (!hw || !aw) return;
+    const m = phaseArr[idx];
+    if (!m) return;
+    const i = matches.findIndex(x => x.id === m.id);
+    if (i < 0) return;
+    matches[i] = { ...matches[i], homeTeam: hw, awayTeam: aw, homeFlag: teamFlag(hw), awayFlag: teamFlag(aw), tbd: false };
+    filled = true;
+  };
+
+  /* R32 → R16 */
+  for (let i = 0; i < r32to16.length && i < r16.length; i++) {
+    const [ha, aa] = r32to16[i];
+    setTeams(r16, i, winn(r32[ha]), winn(r32[aa]));
+  }
+  /* R16 → QF */
+  for (let i = 0; i < r16toQF.length && i < qf.length; i++) {
+    const [ha, aa] = r16toQF[i];
+    setTeams(qf, i, winn(r16[ha]), winn(r16[aa]));
+  }
+  /* QF → SF */
+  for (let i = 0; i < qfToSF.length && i < sf.length; i++) {
+    const [ha, aa] = qfToSF[i];
+    setTeams(sf, i, winn(qf[ha]), winn(qf[aa]));
+  }
+  /* SF → 3rd place (losers) */
+  if (third.length && sf.length >= 2) {
+    setTeams(third, 0, lose(sf[0]), lose(sf[1]));
+  }
+  /* SF → Final (winners) */
+  if (fin.length && sf.length >= 2) {
+    setTeams(fin, 0, winn(sf[0]), winn(sf[1]));
+  }
+
+  /* Fallback: resolución por referencia W/L para rondas donde el bracket no alcanzó */
+  if (matches.some(m => m.tbd && !roundRobin.includes(m.phase))) {
+    const refRe = /^([WL])\s*(.+)$/i;
+    const findMatch = (refNum) => {
+      const normId = (id) => id.replace(/^.*-/, '').replace(/^0+/, '');
+      const n = refNum.replace(/^0+/, '');
+      return matches.find(x =>
+        x.id === refNum || x.id === `2026-${refNum.padStart(3,'0')}` ||
+        x.id.endsWith(`-${refNum.padStart(3,'0')}`) || x.id.endsWith(refNum) || normId(x.id) === n
+      );
+    };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      matches = matches.map(m => {
+        if (roundRobin.includes(m.phase)) return m;
+        const resolve = (name) => {
+          if (!name || typeof name !== 'string') return name;
+          const p = name.match(refRe);
+          if (!p) return name;
+          const num = (p[2].match(/(\d+)$/) || [])[1];
+          if (!num) return name;
+          const ref = findMatch(num);
+          if (!ref || ref.status !== 'FINISHED' || ref.score.home === null) return name;
+          const refWinner = ref.score.home !== ref.score.away
+            ? (ref.score.home > ref.score.away ? ref.homeTeam : ref.awayTeam)
+            : (ref.score.pen != null && ref.score.pen2 != null && ref.score.pen !== ref.score.pen2
+              ? (ref.score.pen > ref.score.pen2 ? ref.homeTeam : ref.awayTeam)
+              : null);
+          if (!refWinner) return name;
+          return p[1].toUpperCase() === 'W' ? refWinner
+            : (refWinner === ref.homeTeam ? ref.awayTeam : ref.homeTeam);
+        };
+        const newHome = resolve(m.homeTeam), newAway = resolve(m.awayTeam);
+        if (newHome !== m.homeTeam || newAway !== m.awayTeam) {
+          changed = true;
+          const stillTbd = !newHome || !newAway || /^[WL]\s*\d/i.test(newHome) || /^[WL]\s*\d/i.test(newAway);
+          return { ...m, homeTeam: newHome, awayTeam: newAway, homeFlag: teamFlag(newHome), awayFlag: teamFlag(newAway), tbd: stillTbd };
+        }
+        return m;
+      });
+    }
+  }
+  return matches;
 }
 
 async function fetchFromAPI(backup = false) {
@@ -1945,15 +2147,18 @@ async function fetchFromAPI(backup = false) {
         return fetchFromAPI(true);
       }
       const retryAfter = parseInt(res.headers.get('retry-after')) || 3600;
+      setApiLimited(true);
       const mins = Math.ceil(retryAfter / 60);
       console.warn(`API rate limit, esperando ${retryAfter}s...`);
       toast(`⚠️ Límite API diario excedido. Espera ${mins} min...`, "warn");
+      setSyncStatus(`⚠️ API limitada — reintentando en ${mins}min...`);
       await new Promise(r => setTimeout(r, retryAfter * 1000));
+      setApiLimited(false);
       return fetchFromAPI();
     }
     if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
     const data = await res.json();
-    return (data.data || []).map(m => {
+    const matches = (data.data || []).map(m => {
       const hasScore = m.homeScore !== null && m.awayScore !== null;
       const utcStr = m.kickoffUtc || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
       return {
@@ -1965,11 +2170,11 @@ async function fetchFromAPI(backup = false) {
         utcDate:  utcStr,
         status:   hasScore ? 'FINISHED' : 'SCHEDULED',
         phase:    zafronixStageToPhase(m.stage),
-        tbd:      !m.homeTeam || m.homeTeam.startsWith('W ') || m.homeTeam.startsWith('L ') || /^\d[A-Z]$/.test(m.homeTeam),
-        score:    { home: m.homeScore, away: m.awayScore }
+        tbd:      !m.homeTeam || /^[WL]\s*\d/.test(m.homeTeam) || /^\d[A-Z]$/.test(m.homeTeam),
+        score:    { home: m.homeScore, away: m.awayScore, pen: m.homePenalty, pen2: m.awayPenalty }
       };
     });
-    return fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined);
+    return fillKnockoutBracket(await fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined));
   } catch (e) {
     console.error("API falló:", e.message);
     toast("Error al conectar con la API: " + e.message, "error");
@@ -2086,16 +2291,22 @@ function renderMatchCard(m, idx) {
   /* Feedback pronóstico */
   let feedbackHTML = '';
   if (pron && m.status === 'FINISHED' && hasScore) {
-    const pts = calcPoints(pron, m.score);
-    if (pts === SCORING.EXACT_SCORE) {
+    const pts = calcPoints(pron, m.score, m);
+    if (pts === SCORING.EXACT_QUALIFIER) {
+      feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Exacto + clasifica <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (pts === SCORING.EXACT_MISS_QUAL) {
+      feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Exacto, ❌ clasifica <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (pts === SCORING.EXACT_SCORE) {
       feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Resultado exacto <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.CORRECT_WINNER) {
-      feedbackHTML = `<div class="result-feedback feedback-winner">✅ Ganador correcto <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (pts === SCORING.CORRECT_WINNER || pts === SCORING.DRAW_TREND) {
+      feedbackHTML = `<div class="result-feedback feedback-winner">✅ Ganador/empate correcto <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (pts === SCORING.CONSOLATION) {
+      feedbackHTML = `<div class="result-feedback feedback-winner">💪 Clasifica correcto <span class="points-badge">+${pts} pts</span></div>`;
     } else {
       feedbackHTML = `<div class="result-feedback feedback-miss">❌ Sin puntos <span class="points-badge">0 pts</span></div>`;
     }
   } else if (pron && m.status !== 'FINISHED') {
-    feedbackHTML = `<div class="result-feedback feedback-pending">⏳ Tu pronóstico: ${pron.golesA} – ${pron.golesB}</div>`;
+    feedbackHTML = `<div class="result-feedback feedback-pending">⏳ Tu pronóstico: ${pron.golesA} – ${pron.golesB}${pron.qualifier ? ' (' + (pron.qualifier==='H'?m.homeTeam:m.awayTeam) + ' clasifica)' : ''}</div>`;
   }
 
   const dateStr = formatLocalDate(m.utcDate);
@@ -2129,6 +2340,18 @@ function renderMatchCard(m, idx) {
         </div>
       </div>
       ${!m.tbd ? `
+      ${isKnockoutPhase(m.phase) ? `
+      <div class="qualifier-row">
+        <span class="qualifier-label">🏆 Quién clasifica?</span>
+        <div class="qualifier-btns">
+          <button class="qual-btn ${pron && pron.qualifier==='H'?'active':''}" id="qH_${m.id}" onclick="setQualifier('${escHtml(m.id).replace(/'/g,"\\'")}','H')" ${isLocked||!isActivo?'disabled':''}>
+            <span class="qual-flag">${m.homeFlag}</span> ${escHtml(m.homeTeam)}
+          </button>
+          <button class="qual-btn ${pron && pron.qualifier==='A'?'active':''}" id="qA_${m.id}" onclick="setQualifier('${escHtml(m.id).replace(/'/g,"\\'")}','A')" ${isLocked||!isActivo?'disabled':''}>
+            <span class="qual-flag">${m.awayFlag}</span> ${escHtml(m.awayTeam)}
+          </button>
+        </div>
+      </div>` : ''}
       <div class="pronostico-actions">
         <div class="pronostico-label">
           <span>${isLocked ? '🔒 Cerrado' : (pron ? '✏️ Editar pronóstico' : '💾 Ingresa tu pronóstico')}</span>
@@ -2146,6 +2369,14 @@ function renderMatchCard(m, idx) {
 /* ══════════════════════════════════════════════
    PRONÓSTICOS — FIREBASE
    ══════════════════════════════════════════════ */
+function setQualifier(matchId, side) {
+  const qH = document.getElementById('qH_'+matchId);
+  const qA = document.getElementById('qA_'+matchId);
+  if (!qH || !qA) return;
+  qH.classList.toggle('active', side==='H');
+  qA.classList.toggle('active', side==='A');
+}
+
 async function savePronostico(matchId) {
   if (!currentUser) { toast("Debes iniciar sesión", "error"); return; }
   if (!isActivo) { toast("🔒 Tu cuenta no está activada. Espera a que un administrador la active.", "error"); return; }
@@ -2157,7 +2388,22 @@ async function savePronostico(matchId) {
   const aVal = parseInt(document.getElementById(`aInput_${matchId}`)?.value ?? '');
   if (isNaN(hVal) || isNaN(aVal)) { toast("Ingresa ambos marcadores", "error"); return; }
 
+  let qualifier = null;
+  if (isKnockoutPhase(m.phase)) {
+    const qH = document.getElementById('qH_'+matchId);
+    const qA = document.getElementById('qA_'+matchId);
+    if (qH && qA) {
+      if (qH.classList.contains('active')) qualifier = 'H';
+      else if (qA.classList.contains('active')) qualifier = 'A';
+    }
+    if (hVal === aVal && !qualifier) {
+      toast("Empataste el marcador: selecciona quién clasifica", "error");
+      return;
+    }
+  }
+
   const data = { golesA: hVal, golesB: aVal, timestamp: new Date().toISOString() };
+  if (qualifier) data.qualifier = qualifier;
 
   try {
     if (db) {
@@ -2219,11 +2465,11 @@ function buildRanking(allProns) {
     for (const [matchId, pron] of Object.entries(prons)) {
       const m = allMatches.find(x => x.id === matchId);
       if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
-      const p = calcPoints(pron, m.score);
+      const p = calcPoints(pron, m.score, m);
       pts += p;
       total++;
-      if (p === SCORING.EXACT_SCORE)   exact++;
-      if (p === SCORING.CORRECT_WINNER) winner++;
+      if (p === SCORING.EXACT_SCORE || p === SCORING.EXACT_QUALIFIER || p === SCORING.EXACT_MISS_QUAL) exact++;
+      if (p === SCORING.CORRECT_WINNER || p === SCORING.DRAW_TREND || p === SCORING.CONSOLATION) winner++;
     }
     const userInfo = allUsers[emailKey] || {};
     ranking.push({
@@ -2313,7 +2559,7 @@ function computeStats(allProns) {
     for (const prons of Object.values(allProns)) {
       if (prons[m.id]) {
         count++;
-        if (calcPoints(prons[m.id], m.score) === SCORING.EXACT_SCORE) correct++;
+        if (calcPoints(prons[m.id], m.score, m) === SCORING.EXACT_SCORE) correct++;
       }
     }
     if (count) matchAccuracy[m.id] = { pct: Math.round((correct/count)*100), count, m };
@@ -2331,7 +2577,7 @@ function computeStats(allProns) {
       totalProns++;
       const m = allMatches.find(x=>x.id===mid);
       if (m&&m.status==='FINISHED'&&m.score&&m.score.home!==null) {
-        if (calcPoints(p,m.score)===SCORING.EXACT_SCORE) exactTotal++;
+        if (calcPoints(p,m.score,m)===SCORING.EXACT_SCORE) exactTotal++;
       }
     }
   }
@@ -2421,16 +2667,17 @@ function adminExportCSV() {
     db.ref('pronosticos').once('value', snap => {
 
       const allProns = snap.val() || {};
-      let rows = [['Usuario','Partido','Local','Visitante','Pronóstico','Resultado','Puntos','Fecha']];
+      let rows = [['Usuario','Partido','Local','Visitante','Pronóstico','Clasifica','Resultado','Puntos','Fecha']];
       for (const [emailKey, prons] of Object.entries(allProns)) {
         const user = allUsers[emailKey] || { name: emailKey };
         for (const [matchId, pron] of Object.entries(prons)) {
           const m = allMatches.find(x => x.id === matchId);
           if (!m) continue;
-          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
+          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score,m) : '—';
           const result = (m.score&&m.score.home!==null) ? `${m.score.home}-${m.score.away}` : '—';
+          const qual = pron.qualifier ? (pron.qualifier==='H'?m.homeTeam:m.awayTeam) : '—';
           rows.push([user.name||emailKey, matchId, m.homeTeam, m.awayTeam,
-            `${pron.golesA}-${pron.golesB}`, result, pts, pron.timestamp?.substring(0,10)||'']);
+            `${pron.golesA}-${pron.golesB}`, qual, result, pts, pron.timestamp?.substring(0,10)||'']);
         }
       }
       const csv = rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
@@ -2508,12 +2755,13 @@ function renderAdminPage() {
       for (const [matchId, pron] of Object.entries(prons)) {
         const m = allMatches.find(x=>x.id===matchId);
         if (!m) continue;
-        const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score) : '—';
+        const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score,m) : '—';
         const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
+        const qual = pron.qualifier ? ` (${pron.qualifier==='H'?m.homeTeam:m.awayTeam})` : '';
         rows += `<tr>
           <td>${escHtml(user.name||emailKey)}</td>
           <td>${escHtml(m.homeTeam)} vs ${escHtml(m.awayTeam)}</td>
-          <td><strong>${pron.golesA}–${pron.golesB}</strong></td>
+          <td><strong>${pron.golesA}–${pron.golesB}</strong>${qual}</td>
           <td>${result}</td>
           <td><strong>${pts}</strong></td>
           <td>${pron.timestamp?.substring(0,10)||'—'}</td>
@@ -2594,12 +2842,35 @@ async function toggleActivo(emailKey, activo) {
 /* ══════════════════════════════════════════════
    PUNTUACIÓN
    ══════════════════════════════════════════════ */
-function calcPoints(pron, score) {
+function calcPoints(pron, score, match) {
   if (!pron || !score || score.home===null || score.away===null) return 0;
   const gA = parseInt(pron.golesA), gB = parseInt(pron.golesB);
   if (isNaN(gA) || isNaN(gB)) return 0;
   const rA = score.home, rB = score.away;
-  if (gA === rA && gB === rB) return SCORING.EXACT_SCORE;
+  const exact = gA === rA && gB === rB;
+
+  /* Knockout: scoring con desempate */
+  if (match && isKnockoutPhase(match.phase)) {
+    const winner = winn(match);
+    const predWin = gA>gB?'H':gA<gB?'A':'D';
+    const realWin = rA>rB?'H':rA<rB?'A':'D';
+    /* Si el usuario no eligió clasifica pero puso un ganador, se infiere */
+    let qual = pron.qualifier;
+    if (!qual && gA !== gB) qual = gA > gB ? 'H' : 'A';
+    const qualMatch = qual && (
+      (qual === 'H' && winner === match.homeTeam) ||
+      (qual === 'A' && winner === match.awayTeam)
+    );
+    if (exact) {
+      return qualMatch ? SCORING.EXACT_QUALIFIER : SCORING.EXACT_MISS_QUAL;
+    }
+    if (predWin === realWin) return SCORING.CORRECT_WINNER;
+    if (qualMatch) return SCORING.CONSOLATION;
+    return 0;
+  }
+
+  /* Fase de grupos: puntuación original */
+  if (exact) return SCORING.EXACT_SCORE;
   const predWin = gA>gB?'H':gA<gB?'A':'D';
   const realWin = rA>rB?'H':rA<rB?'A':'D';
   if (predWin === realWin) return SCORING.CORRECT_WINNER;
@@ -2711,6 +2982,23 @@ function teamFlag(name) {
 
 function setSyncStatus(msg) {
   document.getElementById('syncInfo').textContent = msg;
+}
+
+function setApiLimited(limited) {
+  apiLimited = limited;
+  const dot = document.getElementById('syncDot');
+  if (dot) {
+    dot.style.background = limited ? '#E74C3C' : '#27AE60';
+    if (limited) {
+      dot.style.animation = 'none';
+    } else {
+      dot.style.animation = 'pulse 2s infinite';
+    }
+  }
+  const info = document.getElementById('syncInfo');
+  if (info && limited) {
+    info.innerHTML = '⚠️ API diaria limitada — resultados se actualizarán cuando se renueve';
+  }
 }
 
 /* ══════════════════════════════════════════════
