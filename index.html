@@ -2304,14 +2304,19 @@ function applyScores(source) {
     const espn = source.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
     if (!espn) return m;
     const updatedDate = espn.utcDate || m.utcDate;
-    if (!espn.score || espn.score.home === null) {
-      if (updatedDate !== m.utcDate) return { ...m, utcDate: updatedDate };
+    const updatedDateOnly = updatedDate !== m.utcDate ? { utcDate: updatedDate } : {};
+    if (espn.status !== 'FINISHED') {
+      const wasFinished = m.status === 'FINISHED';
+      if (wasFinished || updatedDateOnly.utcDate) {
+        return { ...m, ...updatedDateOnly, status: 'SCHEDULED', score: { home: null, away: null, pen: null, pen2: null } };
+      }
       return m;
     }
+    if (!espn.score || espn.score.home === null) return { ...m, ...updatedDateOnly, status: 'SCHEDULED', score: { home: null, away: null, pen: null, pen2: null } };
     const h = espn.score.home, a = espn.score.away;
     const old = m.score;
-    if (old && old.home === h && old.away === a && m.status === 'FINISHED' && updatedDate === m.utcDate) return m;
-    return { ...m, utcDate: updatedDate, score: { home: h, away: a, pen: m.score?.pen ?? null, pen2: m.score?.pen2 ?? null }, status: 'FINISHED' };
+    if (old && old.home === h && old.away === a && m.status === 'FINISHED' && !updatedDateOnly.utcDate) return m;
+    return { ...m, ...updatedDateOnly, score: { home: h, away: a, pen: m.score?.pen ?? null, pen2: m.score?.pen2 ?? null }, status: 'FINISHED' };
   });
   return updated;
 }
