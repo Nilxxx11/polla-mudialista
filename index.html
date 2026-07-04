@@ -1169,7 +1169,7 @@ body {
         <tr><td><span class="points-icon">💪</span></td><td><strong>Clasifica correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste el resultado pero sí quién avanzó</span></td><td style="text-align:right"><span class="pts-badge">+1 pt</span></td></tr>
       </table>
       <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
-        💡 Los pronósticos se bloquean 1 hora antes del inicio del partido. ¡No olvides pronosticar antes!
+        💡 Los pronósticos se bloquean 15 minutos antes del inicio del partido. ¡No olvides pronosticar antes!
       </div>
     </div>
     <div class="modal-actions">
@@ -1515,8 +1515,10 @@ let refreshTimer = null;
 let isAdmin      = false;
 let isActivo     = false;
 let apiLimited   = false;
-let lastMatchTs  = '';
 let pointsModalShown = false;
+let lastMatchesJson = '';
+let lastLeaderboardJson = '';
+let matchRenderQueued = false;
 
 /* ══════════════════════════════════════════════
    INIT FIREBASE
@@ -1822,15 +1824,11 @@ function listenToMatches() {
     try {
       const fbData = snap.val();
       if (fbData && fbData.data && Array.isArray(fbData.data)) {
-        const updated = fbData.updated || '';
-        /* Evita el loop: si el timestamp no cambió, salta */
-        if (updated && updated === lastMatchTs) return;
-        lastMatchTs = updated;
         let fbMatches = fbData.data.map(m => ({
           ...m,
           score: m.score || { home: null, away: null }
         }));
-        setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
+        setSyncStatus("En vivo • actualizado");
         const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
         let filledR32 = false;
         if (neededR32) {
@@ -1862,9 +1860,7 @@ function listenToMatches() {
         allMatches = fbMatches;
         cacheMatches();
         if ((filledR32 || filledKO) && db) {
-          const ts = new Date().toISOString();
-          lastMatchTs = ts;
-          await db.ref('matches').set({ data: fbMatches, updated: ts });
+          await db.ref('matches').set({ data: fbMatches, updated: new Date().toISOString() });
           setSyncStatus("En vivo • actualizado");
         }
         renderMatches();
@@ -1873,9 +1869,7 @@ function listenToMatches() {
       } else {
         fetchFromAPI().then(fresh => {
           if (fresh.length) {
-            const ts = new Date().toISOString();
-            lastMatchTs = ts;
-            db.ref('matches').set({ data: fresh, updated: ts });
+            db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
           }
         }).catch(() => toast("Error cargando partidos.", "error"));
       }
@@ -1896,9 +1890,7 @@ async function refreshResults(showToast) {
       if (fresh.length) {
         allMatches = fresh; cacheMatches();
         if (db) {
-          const ts = new Date().toISOString();
-          lastMatchTs = ts;
-          await db.ref('matches').set({ data: fresh, updated: ts });
+          await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
         }
         if (showToast) toast("✅ Partidos actualizados", "success");
       }
@@ -2197,7 +2189,7 @@ async function fetchFromAPI(backup = false) {
       setSyncStatus(`⚠️ API limitada — reintentando en ${mins}min...`);
       await new Promise(r => setTimeout(r, retryAfter * 1000));
       setApiLimited(false);
-      return fetchFromAPI();
+      return fetchFromAPI(true);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
     const data = await res.json();
@@ -2237,6 +2229,12 @@ function cacheMatches() {
    ══════════════════════════════════════════════ */
 function renderMatches() {
   const grid    = document.getElementById('matchesGrid');
+  if (!grid) return;
+  const focusedId = document.activeElement?.id || '';
+  const focusedVal = focusedId && document.activeElement ? document.activeElement.value : '';
+  const key = JSON.stringify(allMatches) + '|' + currentFilter + '|' + currentPhase + '|' + (document.getElementById('searchInput').value || '') + '|' + JSON.stringify(myPronosticos);
+  if (key === lastMatchesJson) return (focusedId && document.getElementById(focusedId)) || undefined;
+  lastMatchesJson = key;
   const search  = (document.getElementById('searchInput').value || '').toLowerCase();
   const pronKey = currentUser ? sanitizeKey(currentUser.email) : '';
 
@@ -2279,6 +2277,10 @@ function renderMatches() {
     });
   }
   grid.innerHTML = html;
+  if (focusedId) {
+    const el = document.getElementById(focusedId);
+    if (el) { el.focus(); el.value = focusedVal; }
+  }
 }
 
 function renderPhaseTabs() {
@@ -2450,6 +2452,7 @@ async function savePronostico(matchId) {
 
   try {
     if (db) {
+      myPronosticos[matchId] = data;
       await db.ref(`pronosticos/${sanitizeKey(currentUser.email)}/${matchId}`).set(data);
     } else {
       /* Demo mode */
@@ -2530,6 +2533,9 @@ function buildRanking(allProns) {
 
 function renderLeaderboard(ranking) {
   const list = document.getElementById('leaderboardList');
+  const lbKey = JSON.stringify(ranking) + '|' + (currentUser ? sanitizeKey(currentUser.email) : '');
+  if (lbKey === lastLeaderboardJson) return;
+  lastLeaderboardJson = lbKey;
   if (!ranking.length) {
     list.innerHTML = `<div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-text">Aún no hay participantes con puntos</div></div>`;
     return;
@@ -2566,14 +2572,15 @@ function renderLeaderboard(ranking) {
    ══════════════════════════════════════════════ */
 function updateMyStats(ranking) {
   let pts=0, exact=0, total=0;
+  let myRank = '—';
 
   if (ranking && currentUser) {
     const me = ranking.find(u => u.emailKey === sanitizeKey(currentUser.email));
     if (me) { pts=me.pts; exact=me.exact; total=me.total; }
-    const myRank = (ranking.findIndex(u => u.emailKey === sanitizeKey(currentUser.email)) + 1) || '—';
-    document.getElementById('myRank').textContent = myRank;
+    myRank = (ranking.findIndex(u => u.emailKey === sanitizeKey(currentUser.email)) + 1) || '—';
   }
 
+  document.getElementById('myRank').textContent = myRank;
   document.getElementById('myPoints').textContent = pts;
   document.getElementById('myExact').textContent  = exact;
   document.getElementById('myPronosticos').textContent = Object.keys(myPronosticos).length;
@@ -2935,7 +2942,7 @@ function recalcAllPoints() {
    ══════════════════════════════════════════════ */
 function isMatchLocked(m) {
   if (m.tbd) return true;
-  return new Date(m.utcDate).getTime() - 3600000 <= Date.now();
+  return new Date(m.utcDate).getTime() - 900000 <= Date.now();
 }
 
 function sanitizeKey(email) {
