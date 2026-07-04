@@ -594,6 +594,13 @@ body {
 .stat-val.green { color: var(--green); }
 .stat-divider { width: 1px; background: var(--border-subtle); align-self: stretch; }
 .stat-sync-info { margin-left: auto; font-size: 0.72rem; color: var(--text-sub); display: flex; align-items: center; gap: 6px; }
+.btn-refresh {
+  background: none; border: 1px solid var(--border-subtle); border-radius: 4px;
+  color: var(--text-sub); cursor: pointer; font-size: 0.85rem; line-height: 1;
+  padding: 2px 5px; transition: all 0.15s;
+}
+.btn-refresh:hover { border-color: var(--accent); color: var(--accent); transform: rotate(45deg); }
+.btn-refresh:active { transform: rotate(90deg); }
 .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
 .sync-dot.limited { background: #E74C3C; animation: none; }
 @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
@@ -1323,6 +1330,7 @@ body {
       <div class="stat-sync-info">
         <div class="sync-dot" id="syncDot"></div>
         <span id="syncInfo">Sincronizando...</span>
+        <button class="btn-refresh" onclick="refreshResults(true)" title="Forzar actualización">↻</button>
       </div>
     </div>
 
@@ -1507,6 +1515,8 @@ let refreshTimer = null;
 let isAdmin      = false;
 let isActivo     = false;
 let apiLimited   = false;
+let lastMatchTs  = '';
+let pointsModalShown = false;
 
 /* ══════════════════════════════════════════════
    INIT FIREBASE
@@ -1739,6 +1749,12 @@ async function onUserLoggedIn(user) {
 
   /* Refresco automático */
   refreshTimer = setInterval(refreshResults, API_CONFIG.REFRESH_INTERVAL);
+
+  /* Mostrar sistema de puntos al ingresar (solo una vez por sesión) */
+  if (!pointsModalShown) {
+    pointsModalShown = true;
+    showPointsInfo();
+  }
 }
 
 function updateUserUI(user) {
@@ -1806,11 +1822,14 @@ function listenToMatches() {
     try {
       const fbData = snap.val();
       if (fbData && fbData.data && Array.isArray(fbData.data)) {
+        const updated = fbData.updated || '';
+        /* Evita el loop: si el timestamp no cambió, salta */
+        if (updated && updated === lastMatchTs) return;
+        lastMatchTs = updated;
         let fbMatches = fbData.data.map(m => ({
           ...m,
           score: m.score || { home: null, away: null }
         }));
-        const updated = fbData.updated || '';
         setSyncStatus("En vivo • " + (updated ? timeAgo(new Date(updated).getTime()) : 'actualizado'));
         const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
         let filledR32 = false;
@@ -1822,23 +1841,42 @@ function listenToMatches() {
         if (neededKO || neededR32) {
           fbMatches = fillKnockoutBracket(fbMatches);
         }
+        /* If stale Firebase data can't be filled, fetch fresh from API */
+        const stillNeedsR32 = neededR32 && fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
+        let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
+          try {
+            const fresh = await fetchFromAPI();
+            if (fresh.length) {
+              fbMatches = fresh;
+              filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
+              stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+            }
+          } catch(e) { console.warn("Fallback fetch failed:", e.message); }
+        }
         const currentHasR32 = allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
         const currentHasKO = !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if (neededR32 && !filledR32 && currentHasR32) return;
         if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
-        const stillNeedsKO = fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         const filledKO = neededKO && !stillNeedsKO;
         allMatches = fbMatches;
         cacheMatches();
         if ((filledR32 || filledKO) && db) {
-          await db.ref('matches').set({ data: fbMatches, updated: new Date().toISOString() });
+          const ts = new Date().toISOString();
+          lastMatchTs = ts;
+          await db.ref('matches').set({ data: fbMatches, updated: ts });
+          setSyncStatus("En vivo • actualizado");
         }
         renderMatches();
         renderPhaseTabs();
         recalcAllPoints();
       } else {
         fetchFromAPI().then(fresh => {
-          if (fresh.length) db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+          if (fresh.length) {
+            const ts = new Date().toISOString();
+            lastMatchTs = ts;
+            db.ref('matches').set({ data: fresh, updated: ts });
+          }
         }).catch(() => toast("Error cargando partidos.", "error"));
       }
     } catch(e) {
@@ -1847,21 +1885,26 @@ function listenToMatches() {
   });
 }
 
-async function refreshResults() {
+async function refreshResults(showToast) {
   if (!allMatches.length) return;
   setSyncStatus("Actualizando resultados...");
   document.getElementById('syncDot').style.background = '#4FC3F7';
+  if (showToast) toast("🔄 Actualizando partidos...", "info");
 
   try {
     const fresh = await fetchFromAPI();
-    if (fresh.length) {
-      allMatches = fresh; cacheMatches();
-      if (db) {
-        await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+      if (fresh.length) {
+        allMatches = fresh; cacheMatches();
+        if (db) {
+          const ts = new Date().toISOString();
+          lastMatchTs = ts;
+          await db.ref('matches').set({ data: fresh, updated: ts });
+        }
+        if (showToast) toast("✅ Partidos actualizados", "success");
       }
-    }
   } catch (e) {
     console.warn("Error en refresco:", e.message);
+    if (showToast) toast("⚠️ Error al actualizar: " + e.message, "error");
   }
 
   renderMatches();
@@ -1881,7 +1924,7 @@ function zafronixStageToPhase(stage) {
     'r16':'Octavos de Final','round_of_16':'Octavos de Final','round_16':'Octavos de Final','last_16':'Octavos de Final',
     'qf':'Cuartos de Final','quarterfinals':'Cuartos de Final','quarter_finals':'Cuartos de Final',
     'sf':'Semifinal','semifinals':'Semifinal','semi_finals':'Semifinal',
-    'final':'Final 🏆','third_place':'Tercer Lugar','thirdplace':'Tercer Lugar'
+    'final':'Final 🏆','third_place':'Tercer Lugar','thirdplace':'Tercer Lugar','thirdPlace':'Tercer Lugar'
   };
   const val = (stage || '').toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
   return map[val] || map[stage] || stage || 'Fase de Grupos';
@@ -2163,15 +2206,15 @@ async function fetchFromAPI(backup = false) {
       const utcStr = m.kickoffUtc || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
       return {
         id:       m.id,
-        homeTeam: m.homeTeam,
-        awayTeam: m.awayTeam,
-        homeFlag: teamFlag(m.homeTeam),
-        awayFlag: teamFlag(m.awayTeam),
+        homeTeam: m.homeTeam || m.homeRef,
+        awayTeam: m.awayTeam || m.awayRef,
+        homeFlag: teamFlag(m.homeTeam || m.homeRef),
+        awayFlag: teamFlag(m.awayTeam || m.awayRef),
         utcDate:  utcStr,
         status:   hasScore ? 'FINISHED' : 'SCHEDULED',
         phase:    zafronixStageToPhase(m.stage),
         tbd:      !m.homeTeam || /^[WL]\s*\d/.test(m.homeTeam) || /^\d[A-Z]$/.test(m.homeTeam),
-        score:    { home: m.homeScore, away: m.awayScore, pen: m.homePenalty, pen2: m.awayPenalty }
+        score:    { home: m.homeScore, away: m.awayScore, pen: m.penalties?.home ?? null, pen2: m.penalties?.away ?? null }
       };
     });
     return fillKnockoutBracket(await fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined));
@@ -2981,7 +3024,8 @@ function teamFlag(name) {
 }
 
 function setSyncStatus(msg) {
-  document.getElementById('syncInfo').textContent = msg;
+  const info = document.getElementById('syncInfo');
+  if (info) info.textContent = msg;
 }
 
 function setApiLimited(limited) {
@@ -2989,15 +3033,11 @@ function setApiLimited(limited) {
   const dot = document.getElementById('syncDot');
   if (dot) {
     dot.style.background = limited ? '#E74C3C' : '#27AE60';
-    if (limited) {
-      dot.style.animation = 'none';
-    } else {
-      dot.style.animation = 'pulse 2s infinite';
-    }
+    dot.style.animation = limited ? 'none' : 'pulse 2s infinite';
   }
   const info = document.getElementById('syncInfo');
   if (info && limited) {
-    info.innerHTML = '⚠️ API diaria limitada — resultados se actualizarán cuando se renueve';
+    info.textContent = '⚠️ API diaria limitada';
   }
 }
 
