@@ -1398,6 +1398,7 @@ body {
         </div>
         <div class="admin-card">
           <div class="admin-card-title"><span>🏆</span> Gestión de Puntos</div>
+          <button class="btn-admin" onclick="adminRecalcRanking()">🔄 Recalcular tabla de posiciones</button>
           <button class="btn-admin danger" disabled style="opacity:0.4;cursor:not-allowed" title="Función deshabilitada por seguridad">⚠️ Reiniciar todos los puntos</button>
           <button class="btn-admin" onclick="adminExportCSV()">📥 Exportar pronósticos CSV</button>
         </div>
@@ -1838,7 +1839,11 @@ function listenToMatches() {
         cacheMatches();
         renderMatches();
         renderPhaseTabs();
-        recalcAllPoints();
+        if (isAdmin) {
+          recalcAllPoints();
+        } else {
+          computeMyStats();
+        }
       } else {
         syncFromInternet().then(fresh => {
           if (fresh.length) db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
@@ -2508,7 +2513,7 @@ async function savePronostico(matchId) {
       /* Demo mode */
       myPronosticos[matchId] = data;
       renderMatches();
-      updateMyStats();
+      computeMyStats();
     }
     toast("✅ Pronóstico guardado — " + m.homeTeam + " " + hVal + "–" + aVal + " " + m.awayTeam, "success");
   } catch (e) {
@@ -2521,7 +2526,7 @@ function listenToPronosticos() {
   db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).on('value', snap => {
     myPronosticos = snap.val() || {};
     renderMatches();
-    updateMyStats();
+    computeMyStats();
   });
 }
 
@@ -2548,6 +2553,7 @@ function listenToLeaderboard() {
   db.ref('ranking').on('value', rs => {
     const r = rs.val();
     if (r && r.data && r.data.length) {
+      lastLeaderboardJson = '';
       renderLeaderboard(r.data);
       updateMyStats(r.data);
     } else {
@@ -2663,6 +2669,24 @@ function updateMyStats(ranking) {
   document.getElementById('myPoints').textContent = pts;
   document.getElementById('myExact').textContent  = exact;
   document.getElementById('myPronosticos').textContent = Object.keys(myPronosticos).length;
+}
+
+function computeMyStats() {
+  if (!allMatches.length || !currentUser) return;
+  let pts = 0, exact = 0, total = 0;
+  for (const [matchId, pron] of Object.entries(myPronosticos)) {
+    const m = allMatches.find(x => x.id === matchId);
+    if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
+    const p = calcPoints(pron, m.score, m);
+    pts += p;
+    total++;
+    if (p === SCORING.EXACT_SCORE || p === SCORING.EXACT_QUALIFIER || p === SCORING.EXACT_MISS_QUAL) exact++;
+  }
+  updateMyStats([{
+    emailKey: sanitizeKey(currentUser.email),
+    pts, exact, winner: 0, total,
+    totalProns: Object.keys(myPronosticos).length
+  }]);
 }
 
 /* ══════════════════════════════════════════════
@@ -2788,6 +2812,29 @@ function adminClearCache() {
   localStorage.removeItem(CACHE_TIME);
   document.getElementById('adminSyncStatus').textContent = '🗑️ Caché borrado — ' + new Date().toLocaleTimeString('es-CO');
   toast("Caché limpiado", "success");
+}
+
+async function adminRecalcRanking() {
+  if (!db || !isAdmin) return;
+  toast("🔄 Recalculando tabla de posiciones...", "info");
+  try {
+    const snap = await db.ref('pronosticos').once('value');
+    const all = snap.val() || {};
+    let count = 0;
+    for (const k of Object.keys(all)) count += Object.keys(all[k]).length;
+    const ranking = buildRanking(all);
+    if (!ranking.length) {
+      toast("⚠️ No hay pronósticos para calcular", "error");
+      return;
+    }
+    renderLeaderboard(ranking);
+    updateMyStats(ranking);
+    lastRankingJson = '';
+    storeRanking(ranking);
+    toast(`✅ Tabla recalculada — ${ranking.length} participantes, ${count} pronósticos`, "success");
+  } catch (e) {
+    toast("❌ Error al recalcular: " + e.message, "error");
+  }
 }
 
 function renderAdminMatches() {
@@ -3105,9 +3152,11 @@ function recalcAllPoints() {
     const allProns = {};
     for (const e of entries) { if (e) allProns[e[0]] = e[1]; }
     const ranking = buildRanking(allProns);
-    renderLeaderboard(ranking);
     updateMyStats(ranking);
-    if (db && isAdmin && ranking.length) storeRanking(ranking);
+    if (db && isAdmin && ranking.length) {
+      renderLeaderboard(ranking);
+      storeRanking(ranking);
+    }
   });
 }
 
