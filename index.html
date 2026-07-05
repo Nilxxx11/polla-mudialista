@@ -1643,6 +1643,13 @@ async function registerWithEmail() {
 
 async function logout() {
   try {
+    if (db) {
+      db.ref('matches').off();
+      db.ref('users').off();
+      db.ref('pronosticos').off();
+      db.ref('ranking').off();
+      if (currentUser) db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).off();
+    }
     await auth.signOut();
   } catch(e) { showLogin(); }
 }
@@ -1791,36 +1798,7 @@ async function loadMatches() {
   }
 
   if (db) {
-    /* Cargar partidos desde Firebase una sola vez (sin listener persistente) */
-    try {
-      const fbSnap = await db.ref('matches').once('value');
-      const fbData = fbSnap.val();
-      if (fbData && fbData.data && Array.isArray(fbData.data)) {
-        let fbMatches = fbData.data.map(m => ({ ...m, score: m.score || { home: null, away: null } }));
-        const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
-        if (neededR32) fbMatches = await fillR32Pairings(fbMatches);
-        if (fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos')) fbMatches = fillKnockoutBracket(fbMatches);
-        if (fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos')) {
-          try {
-            const fresh = await syncFromInternet();
-            if (fresh.length) fbMatches = fresh;
-          } catch(e) {}
-        }
-        allMatches = fbMatches;
-        cacheMatches();
-        renderMatches();
-        renderPhaseTabs();
-        recalcAllPoints();
-        setSyncStatus("Datos cargados • " + new Date().toLocaleTimeString('es-CO'));
-      } else {
-        try {
-          const fresh = await syncFromInternet();
-          if (fresh.length) { allMatches = fresh; cacheMatches(); renderMatches(); renderPhaseTabs(); recalcAllPoints(); }
-          await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
-          setSyncStatus("Sincronizado • " + new Date().toLocaleTimeString('es-CO'));
-        } catch(e) { if (!cached) toast("No se pudieron cargar los partidos.", "error"); }
-      }
-    } catch(e) { console.warn("Error cargando partidos:", e.message); }
+    listenToMatches();
   } else {
     try {
       const fresh = await syncFromInternet();
@@ -1832,31 +1810,43 @@ async function loadMatches() {
     renderMatches();
     renderPhaseTabs();
   }
-
-  /* Corrección silenciosa de fechas desde ESPN (se ejecuta después de cargar datos) */
-  setTimeout(async () => {
-    try {
-      const espn = await fetchFromESPN();
-      if (espn.length < 100) return;
-      let changed = false;
-      const norm = n => n?.toLowerCase().replace(/[^a-záéíóúñü0-9]/g,'');
-      allMatches = allMatches.map(m => {
-        const espnMatch = espn.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
-        if (!espnMatch) return m;
-        if (espnMatch.utcDate && espnMatch.utcDate !== m.utcDate) { changed = true; return { ...m, utcDate: espnMatch.utcDate }; }
-        return m;
-      });
-      if (changed) {
-        cacheMatches();
-        if (db) await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
-        renderMatches();
-        renderPhaseTabs();
-      }
-    } catch(e) { /* silencioso */ }
-  }, 3000);
 }
 
-/* ─── Escucha desactivada — los partidos se cargan una sola vez en loadMatches ─── */
+function listenToMatches() {
+  if (!db) return;
+  db.ref('matches').on('value', async snap => {
+    try {
+      const fbData = snap.val();
+      if (fbData && fbData.data && Array.isArray(fbData.data)) {
+        let fbMatches = fbData.data.map(m => ({ ...m, score: m.score || { home: null, away: null } }));
+        setSyncStatus("En vivo • actualizado");
+        const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
+        let filledR32 = false;
+        if (neededR32) { fbMatches = await fillR32Pairings(fbMatches); filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd); }
+        const neededKO = fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if (neededKO || neededR32) fbMatches = fillKnockoutBracket(fbMatches);
+        const stillNeedsR32 = neededR32 && fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
+        let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
+          try { const fresh = await syncFromInternet(); if (fresh.length) fbMatches = fresh; } catch(e) {}
+        }
+        const currentHasR32 = allMatches.length > 0 && allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
+        const currentHasKO = allMatches.length > 0 && !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        if (neededR32 && !filledR32 && currentHasR32) return;
+        if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
+        allMatches = fbMatches;
+        cacheMatches();
+        renderMatches();
+        renderPhaseTabs();
+        recalcAllPoints();
+      } else {
+        syncFromInternet().then(fresh => {
+          if (fresh.length) db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+        }).catch(() => toast("Error cargando partidos.", "error"));
+      }
+    } catch(e) { console.warn("Error en listener de partidos:", e.message); }
+  });
+}
 
 async function refreshResults(showToast) {
   if (!allMatches.length) return;
@@ -2528,9 +2518,10 @@ async function savePronostico(matchId) {
 
 function listenToPronosticos() {
   if (!db || !currentUser) return;
-  db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).once('value', snap => {
+  db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).on('value', snap => {
     myPronosticos = snap.val() || {};
     renderMatches();
+    updateMyStats();
   });
 }
 
@@ -2539,7 +2530,6 @@ function listenToPronosticos() {
    ══════════════════════════════════════════════ */
 function listenToLeaderboard() {
   if (!db) return;
-  /* Cargar usuarios una sola vez */
   db.ref('users').once('value', usersSnap => {
     allUsers = usersSnap.val() || {};
     if (currentUser) {
@@ -2555,45 +2545,42 @@ function listenToLeaderboard() {
     }
   });
 
-  /* Fuente 1: ranking precalculado */
-  db.ref('ranking').once('value', rs => {
+  db.ref('ranking').on('value', rs => {
     const r = rs.val();
     if (r && r.data && r.data.length) {
       renderLeaderboard(r.data);
       updateMyStats(r.data);
+    } else {
+      computeLeaderboard();
     }
   });
+}
 
-  /* Fuente 2: si podemos leer todos los pronósticos, calculamos y guardamos */
-  setTimeout(() => {
-    db.ref('pronosticos').once('value', snap => {
-      const allProns = snap.val() || {};
-      const ranking = buildRanking(allProns);
-      if (ranking.length) {
-        renderLeaderboard(ranking);
-        updateMyStats(ranking);
-        storeRanking(ranking);
-      }
-    }, async () => {
-      const usersSnap = await db.ref('users').once('value');
-      const users = usersSnap.val() || {};
-      allUsers = users;
-      const entries = await Promise.all(Object.keys(users).map(async emailKey => {
-        try {
-          const snap = await db.ref(`pronosticos/${emailKey}`).once('value');
-          return [emailKey, snap.val() || {}];
-        } catch { return null; }
-      }));
-      const allProns = {};
-      for (const e of entries) { if (e) allProns[e[0]] = e[1]; }
-      const ranking = buildRanking(allProns);
-      if (ranking.length || !document.getElementById('leaderboardList').innerHTML.includes('lb-row')) {
-        renderLeaderboard(ranking);
-        updateMyStats(ranking);
-      }
-      if (isAdmin && ranking.length) storeRanking(ranking);
-    });
-  }, 100);
+async function computeLeaderboard() {
+  if (!db) return;
+  db.ref('pronosticos').once('value', snap => {
+    const allProns = snap.val() || {};
+    const ranking = buildRanking(allProns);
+    if (ranking.length) { renderLeaderboard(ranking); updateMyStats(ranking); storeRanking(ranking); }
+  }, async () => {
+    const usersSnap = await db.ref('users').once('value');
+    const users = usersSnap.val() || {};
+    allUsers = users;
+    const entries = await Promise.all(Object.keys(users).map(async emailKey => {
+      try {
+        const snap = await db.ref(`pronosticos/${emailKey}`).once('value');
+        return [emailKey, snap.val() || {}];
+      } catch { return null; }
+    }));
+    const allProns = {};
+    for (const e of entries) { if (e) allProns[e[0]] = e[1]; }
+    const ranking = buildRanking(allProns);
+    if (ranking.length || !document.getElementById('leaderboardList').innerHTML.includes('lb-row')) {
+      renderLeaderboard(ranking);
+      updateMyStats(ranking);
+    }
+    if (isAdmin && ranking.length) storeRanking(ranking);
+  });
 }
 
 function buildRanking(allProns) {
