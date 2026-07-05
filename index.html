@@ -1521,7 +1521,6 @@ let currentPhase = 'all';
 let isAdmin      = false;
 let isActivo     = false;
 let apiLimited   = false;
-let pointsModalShown = false;
 let lastMatchesJson = '';
 let lastLeaderboardJson = '';
 let lastRankingJson = '';
@@ -1754,12 +1753,6 @@ async function onUserLoggedIn(user) {
   await loadMatches();
   listenToPronosticos();
   listenToLeaderboard();
-
-  /* Mostrar sistema de puntos al ingresar (solo una vez por sesión) */
-  if (!pointsModalShown) {
-    pointsModalShown = true;
-    showPointsInfo();
-  }
 }
 
 function updateUserUI(user) {
