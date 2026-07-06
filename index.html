@@ -1883,7 +1883,19 @@ async function refreshResults(showToast) {
 
   renderMatches();
   renderPhaseTabs();
-  recalcAllPoints();
+  try {
+    const snap = await db.ref('pronosticos').once('value');
+    const all = snap.val() || {};
+    const ranking = buildRanking(all);
+    if (ranking.length) {
+      renderLeaderboard(ranking);
+      updateMyStats(ranking);
+      lastRankingJson = '';
+      await storeRanking(ranking);
+    }
+  } catch(e) {
+    console.warn('Error recalculando ranking:', e.message);
+  }
   setSyncStatus("Actualizado • " + new Date().toLocaleTimeString('es-CO'));
   document.getElementById('syncDot').style.background = '#27AE60';
 }
@@ -2831,12 +2843,26 @@ async function adminForceSync() {
       }
       renderMatches();
       renderPhaseTabs();
-      recalcAllPoints();
       const updatedCount = allMatches.filter((m,i) => {
         const old = prev[i];
         return old !== (m.score?.home + '-' + m.score?.away + m.status);
       }).length;
       toast(`✅ ${updatedCount} marcadores actualizados`, "success");
+      /* Recalcular y escribir ranking */
+      try {
+        const snap = await db.ref('pronosticos').once('value');
+        const all = snap.val() || {};
+        const ranking = buildRanking(all);
+        if (ranking.length) {
+          renderLeaderboard(ranking);
+          updateMyStats(ranking);
+          lastRankingJson = '';
+          await storeRanking(ranking);
+          toast(`🏆 Ranking recalculado — ${ranking.length} participantes`, "success");
+        }
+      } catch(e) {
+        toast("⚠️ Error al guardar ranking: " + e.message, "error");
+      }
     }
   } catch (e) {
     toast("Error al sincronizar: " + e.message, "error");
@@ -2919,7 +2945,19 @@ async function adminSaveMatchScore(matchId) {
     allMatches[idx] = { ...allMatches[idx], score: { home: hVal, away: aVal }, status: 'FINISHED' };
     await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
     renderMatches();
-    recalcAllPoints();
+    try {
+      const snap = await db.ref('pronosticos').once('value');
+      const all = snap.val() || {};
+      const ranking = buildRanking(all);
+      if (ranking.length) {
+        renderLeaderboard(ranking);
+        updateMyStats(ranking);
+        lastRankingJson = '';
+        await storeRanking(ranking);
+      }
+    } catch(e) {
+      console.warn('Error recalculando ranking:', e.message);
+    }
     btn.textContent = '✅';
     setTimeout(() => { btn.disabled = false; btn.textContent = 'Guardar'; }, 2000);
     toast("✅ " + allMatches[idx].homeTeam + " " + hVal + "–" + aVal + " " + allMatches[idx].awayTeam, "success");
