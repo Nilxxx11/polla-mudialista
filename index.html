@@ -1164,10 +1164,10 @@ body {
       </div>
       <table class="points-table">
         <tr><td><span class="points-icon">🎯🏆</span></td><td><strong>Exacto + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto + equipo que avanza correcto</span></td><td style="text-align:right"><span class="pts-badge">+5 pts</span></td></tr>
-        <tr><td><span class="points-icon">🎯❌</span></td><td><strong>Exacto + Clasifica mal</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto pero equipo que avanza incorrecto</span></td><td style="text-align:right"><span class="pts-badge">+4 pts</span></td></tr>
-        <tr><td><span class="points-icon">✅🏆</span></td><td><strong>Resultado + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Acertaste el ganador/empate y quién clasifica</span></td><td style="text-align:right"><span class="pts-badge">+3 pts</span></td></tr>
-        <tr><td><span class="points-icon">✅🤝</span></td><td><strong>Empate correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Pronosticaste empate y el partido terminó empatado</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
-        <tr><td><span class="points-icon">💪</span></td><td><strong>Clasifica correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste el resultado pero sí quién avanzó</span></td><td style="text-align:right"><span class="pts-badge">+1 pt</span></td></tr>
+        <tr><td><span class="points-icon">🎯❌</span></td><td><strong>Exacto + Clasifica mal</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto de empate pero clasificado incorrecto</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
+        <tr><td><span class="points-icon">✅🏆</span></td><td><strong>Resultado + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Acertaste el ganador/empate y quién clasifica</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
+        <tr><td><span class="points-icon">✅🤝</span></td><td><strong>Empate correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Pronosticaste empate y terminó empatado, pero clasificado incorrecto</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
+        <tr><td><span class="points-icon">💪</span></td><td><strong>Clasifica correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste el resultado pero sí quién avanzó</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
       </table>
       <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-input);border-radius:8px;font-size:0.78rem;color:var(--text-sub)">
         💡 Los pronósticos se bloquean 15 minutos antes del inicio del partido. ¡No olvides pronosticar antes!
@@ -1497,15 +1497,21 @@ const ADMIN_EMAILS = [
    SISTEMA DE PUNTUACIÓN
    ───────────────────────────────────────────── */
 const SCORING = {
-  EXACT_SCORE: 5,
-  CORRECT_WINNER: 2,
-  /* Knockout con desempate */
-  EXACT_QUALIFIER: 5,      // Marcador exacto + clasifica correcto
-  EXACT_MISS_QUAL: 4,      // Marcador exacto + clasifica mal
-  CORRECT_WINNER_QUAL: 3,  // Resultado correcto + clasifica correcto
-  DRAW_TREND: 2,           // Empate (cualquier score) + empate real
-  CONSOLATION: 1           // Resultado malo + clasifica correcto
+  NONE: 0,
+  GROUP_EXACT: 10,
+  GROUP_WINNER: 11,
+  KO_EXACT_QUAL: 12,
+  KO_EXACT_MISS: 13,
+  KO_WINNER_QUAL: 14,
+  KO_DRAW: 15,
+  KO_CONSOLATION: 16,
 };
+
+function scoringValue(code) {
+  if (code === SCORING.KO_EXACT_QUAL || code === SCORING.GROUP_EXACT) return 5;
+  if (code === SCORING.NONE) return 0;
+  return 2;
+}
 
 function isKnockoutPhase(phase) {
   return /Octavos|Cuartos|Semifinal|Tercer|Final/i.test(phase);
@@ -2393,18 +2399,19 @@ function renderMatchCard(m, idx) {
   /* Feedback pronóstico */
   let feedbackHTML = '';
   if (pron && m.status === 'FINISHED' && hasScore) {
-    const pts = calcPoints(pron, m.score, m);
-    if (pts === SCORING.EXACT_QUALIFIER) {
+    const code = calcPoints(pron, m.score, m);
+    const pts = scoringValue(code);
+    if (code === SCORING.KO_EXACT_QUAL) {
       feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Exacto + clasifica <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.EXACT_MISS_QUAL) {
+    } else if (code === SCORING.KO_EXACT_MISS) {
       feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Exacto, ❌ clasifica <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.EXACT_SCORE) {
+    } else if (code === SCORING.GROUP_EXACT) {
       feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Resultado exacto <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.CORRECT_WINNER || pts === SCORING.DRAW_TREND) {
-      feedbackHTML = `<div class="result-feedback feedback-winner">✅ Ganador/empate correcto <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.CORRECT_WINNER_QUAL) {
+    } else if (code === SCORING.KO_WINNER_QUAL) {
       feedbackHTML = `<div class="result-feedback feedback-winner">✅ Resultado + clasifica <span class="points-badge">+${pts} pts</span></div>`;
-    } else if (pts === SCORING.CONSOLATION) {
+    } else if (code === SCORING.KO_DRAW || code === SCORING.GROUP_WINNER) {
+      feedbackHTML = `<div class="result-feedback feedback-winner">✅ Ganador/empate correcto <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (code === SCORING.KO_CONSOLATION) {
       feedbackHTML = `<div class="result-feedback feedback-winner">💪 Clasifica correcto <span class="points-badge">+${pts} pts</span></div>`;
     } else {
       feedbackHTML = `<div class="result-feedback feedback-miss">❌ Sin puntos <span class="points-badge">0 pts</span></div>`;
@@ -2625,10 +2632,10 @@ function buildRanking(allProns) {
       const m = allMatches.find(x => x.id === matchId);
       if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
       const p = calcPoints(pron, m.score, m);
-      pts += p;
+      pts += scoringValue(p);
       total++;
-      if (p === SCORING.EXACT_SCORE || p === SCORING.EXACT_QUALIFIER || p === SCORING.EXACT_MISS_QUAL) exact++;
-      if (p === SCORING.CORRECT_WINNER || p === SCORING.DRAW_TREND || p === SCORING.CONSOLATION || p === SCORING.CORRECT_WINNER_QUAL) winner++;
+      if (p === SCORING.GROUP_EXACT || p === SCORING.KO_EXACT_QUAL || p === SCORING.KO_EXACT_MISS) exact++;
+      if (p === SCORING.GROUP_WINNER || p === SCORING.KO_DRAW || p === SCORING.KO_CONSOLATION || p === SCORING.KO_WINNER_QUAL) winner++;
     }
     const userInfo = allUsers[emailKey] || {};
     ranking.push({
@@ -2706,9 +2713,9 @@ function computeMyStats() {
     const m = allMatches.find(x => x.id === matchId);
     if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
     const p = calcPoints(pron, m.score, m);
-    pts += p;
+    pts += scoringValue(p);
     total++;
-    if (p === SCORING.EXACT_SCORE || p === SCORING.EXACT_QUALIFIER || p === SCORING.EXACT_MISS_QUAL) exact++;
+    if (p === SCORING.GROUP_EXACT || p === SCORING.KO_EXACT_QUAL || p === SCORING.KO_EXACT_MISS) exact++;
   }
   updateMyStats([{
     emailKey: sanitizeKey(currentUser.email),
@@ -2740,7 +2747,8 @@ function computeStats(allProns) {
     for (const prons of Object.values(allProns)) {
       if (prons[m.id]) {
         count++;
-        if (calcPoints(prons[m.id], m.score, m) === SCORING.EXACT_SCORE) correct++;
+        const p = calcPoints(prons[m.id], m.score, m);
+        if (p === SCORING.GROUP_EXACT || p === SCORING.KO_EXACT_QUAL || p === SCORING.KO_EXACT_MISS) correct++;
       }
     }
     if (count) matchAccuracy[m.id] = { pct: Math.round((correct/count)*100), count, m };
@@ -2758,7 +2766,8 @@ function computeStats(allProns) {
       totalProns++;
       const m = allMatches.find(x=>x.id===mid);
       if (m&&m.status==='FINISHED'&&m.score&&m.score.home!==null) {
-        if (calcPoints(p,m.score,m)===SCORING.EXACT_SCORE) exactTotal++;
+        const pp = calcPoints(p,m.score,m);
+        if (pp === SCORING.GROUP_EXACT || pp === SCORING.KO_EXACT_QUAL || pp === SCORING.KO_EXACT_MISS) exactTotal++;
       }
     }
   }
@@ -2938,7 +2947,7 @@ function adminExportCSV() {
         for (const [matchId, pron] of Object.entries(prons)) {
           const m = allMatches.find(x => x.id === matchId);
           if (!m) continue;
-          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score,m) : '—';
+          const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? scoringValue(calcPoints(pron,m.score,m)) : '—';
           const result = (m.score&&m.score.home!==null) ? `${m.score.home}-${m.score.away}` : '—';
           const qual = pron.qualifier ? (pron.qualifier==='H'?m.homeTeam:m.awayTeam) : '—';
           rows.push([user.name||emailKey, matchId, m.homeTeam, m.awayTeam,
@@ -3020,7 +3029,7 @@ function renderAdminPage() {
       for (const [matchId, pron] of Object.entries(prons)) {
         const m = allMatches.find(x=>x.id===matchId);
         if (!m) continue;
-        const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? calcPoints(pron,m.score,m) : '—';
+        const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? scoringValue(calcPoints(pron,m.score,m)) : '—';
         const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
         const qual = pron.qualifier ? ` (${pron.qualifier==='H'?m.homeTeam:m.awayTeam})` : '';
         rows += `<tr>
@@ -3124,9 +3133,9 @@ function storeRanking(ranking) {
    PUNTUACIÓN
    ══════════════════════════════════════════════ */
 function calcPoints(pron, score, match) {
-  if (!pron || !score || score.home===null || score.away===null) return 0;
+  if (!pron || !score || score.home===null || score.away===null) return SCORING.NONE;
   const gA = parseInt(pron.golesA), gB = parseInt(pron.golesB);
-  if (isNaN(gA) || isNaN(gB)) return 0;
+  if (isNaN(gA) || isNaN(gB)) return SCORING.NONE;
   const rA = score.home, rB = score.away;
   const exact = gA === rA && gB === rB;
 
@@ -3135,7 +3144,6 @@ function calcPoints(pron, score, match) {
     const winner = matchWinner(match);
     const predWin = gA>gB?'H':gA<gB?'A':'D';
     const realWin = rA>rB?'H':rA<rB?'A':'D';
-    /* Si el usuario no eligió clasifica pero puso un ganador, se infiere */
     let qual = pron.qualifier;
     if (!qual && gA !== gB) qual = gA > gB ? 'H' : 'A';
     const qualMatch = qual && (
@@ -3143,20 +3151,20 @@ function calcPoints(pron, score, match) {
       (qual === 'A' && winner === match.awayTeam)
     );
     if (exact) {
-      return qualMatch ? SCORING.EXACT_QUALIFIER : SCORING.EXACT_MISS_QUAL;
+      return qualMatch ? SCORING.KO_EXACT_QUAL : SCORING.KO_EXACT_MISS;
     }
-    if (predWin === realWin && qualMatch) return SCORING.CORRECT_WINNER_QUAL;
-    if (predWin === realWin) return SCORING.CORRECT_WINNER;
-    if (qualMatch) return SCORING.CONSOLATION;
-    return 0;
+    if (predWin === realWin && qualMatch) return SCORING.KO_WINNER_QUAL;
+    if (predWin === realWin) return SCORING.KO_DRAW;
+    if (qualMatch) return SCORING.KO_CONSOLATION;
+    return SCORING.NONE;
   }
 
   /* Fase de grupos: puntuación original */
-  if (exact) return SCORING.EXACT_SCORE;
+  if (exact) return SCORING.GROUP_EXACT;
   const predWin = gA>gB?'H':gA<gB?'A':'D';
   const realWin = rA>rB?'H':rA<rB?'A':'D';
-  if (predWin === realWin) return SCORING.CORRECT_WINNER;
-  return 0;
+  if (predWin === realWin) return SCORING.GROUP_WINNER;
+  return SCORING.NONE;
 }
 
 function recalcAllPoints() {
