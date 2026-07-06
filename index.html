@@ -2867,7 +2867,7 @@ async function adminRecalcRanking() {
     renderLeaderboard(ranking);
     updateMyStats(ranking);
     lastRankingJson = '';
-    storeRanking(ranking);
+    await storeRanking(ranking);
     toast(`✅ Tabla recalculada — ${ranking.length} participantes, ${count} pronósticos`, "success");
   } catch (e) {
     toast("❌ Error al recalcular: " + e.message, "error");
@@ -3124,9 +3124,11 @@ function matchWinner(m) {
 
 function storeRanking(ranking) {
   const rj = JSON.stringify(ranking);
-  if (rj === lastRankingJson) return;
+  if (rj === lastRankingJson) return Promise.resolve();
   lastRankingJson = rj;
-  db.ref('ranking').set({ data: ranking, updated: Date.now() }).catch(() => {});
+  const promise = db.ref('ranking').set({ data: ranking, updated: Date.now() });
+  promise.catch(e => console.warn('storeRanking error:', e));
+  return promise;
 }
 
 /* ══════════════════════════════════════════════
