@@ -1631,7 +1631,7 @@ async function registerWithEmail() {
     await cred.user.updateProfile({ displayName: name });
     /* Save profile directly to RTDB so it's immediately available */
     if (db) {
-      await db.ref(`users/${sanitizeKey(email)}`).set({
+      await db.ref(`users/${sanitizeKey(email.toLowerCase())}`).set({
         name, email, photoURL: '',
         activo: false,
         lastLogin: new Date().toISOString()
@@ -1657,7 +1657,7 @@ async function logout() {
       db.ref('users').off();
       db.ref('pronosticos').off();
       db.ref('ranking').off();
-      if (currentUser) db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).off();
+      if (currentUser) db.ref(`pronosticos/${sanitizeKey(currentUser.email.toLowerCase())}`).off();
     }
     await auth.signOut();
   } catch(e) { showLogin(); }
@@ -2311,7 +2311,6 @@ function renderMatches() {
   if (key === lastMatchesJson) return (focusedId && document.getElementById(focusedId)) || undefined;
   lastMatchesJson = key;
   const search  = (document.getElementById('searchInput').value || '').toLowerCase();
-  const pronKey = currentUser ? sanitizeKey(currentUser.email) : '';
 
   let filtered = allMatches.filter(m => {
     if (currentFilter === 'scheduled') return m.status === 'SCHEDULED';
@@ -2555,7 +2554,7 @@ async function savePronostico(matchId) {
   try {
     if (db) {
       myPronosticos[matchId] = data;
-      await db.ref(`pronosticos/${sanitizeKey(currentUser.email)}/${matchId}`).set(data);
+      await db.ref(`pronosticos/${sanitizeKey(currentUser.email.toLowerCase())}/${matchId}`).set(data);
     } else {
       /* Demo mode */
       myPronosticos[matchId] = data;
@@ -2570,7 +2569,7 @@ async function savePronostico(matchId) {
 
 function listenToPronosticos() {
   if (!db || !currentUser) return;
-  db.ref(`pronosticos/${sanitizeKey(currentUser.email)}`).on('value', snap => {
+  db.ref(`pronosticos/${sanitizeKey(currentUser.email.toLowerCase())}`).on('value', snap => {
     myPronosticos = snap.val() || {};
     renderMatches();
     computeMyStats();
@@ -2585,7 +2584,7 @@ function listenToLeaderboard() {
   db.ref('users').once('value', usersSnap => {
     allUsers = usersSnap.val() || {};
     if (currentUser) {
-      const myData = allUsers[sanitizeKey(currentUser.email)];
+      const myData = allUsers[sanitizeKey(currentUser.email.toLowerCase())];
       if (myData && myData.activo !== undefined) {
         const was = isActivo;
         isActivo = myData.activo === true;
@@ -2665,7 +2664,7 @@ function buildRanking(allProns) {
 
 function renderLeaderboard(ranking) {
   const list = document.getElementById('leaderboardList');
-  const lbKey = JSON.stringify(ranking) + '|' + (currentUser ? sanitizeKey(currentUser.email) : '');
+  const lbKey = JSON.stringify(ranking) + '|' + (currentUser ? sanitizeKey(currentUser.email.toLowerCase()) : '');
   if (lbKey === lastLeaderboardJson) return;
   lastLeaderboardJson = lbKey;
   if (!ranking.length) {
@@ -2673,7 +2672,7 @@ function renderLeaderboard(ranking) {
     return;
   }
 
-  const myKey = currentUser ? sanitizeKey(currentUser.email) : '';
+  const myKey = currentUser ? sanitizeKey(currentUser.email.toLowerCase()) : '';
   list.innerHTML = ranking.map((u, i) => {
     const rankClass = i===0?'rank-1':i===1?'rank-2':i===2?'rank-3':'';
     const rankIcon  = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
@@ -2707,9 +2706,9 @@ function updateMyStats(ranking) {
   let myRank = '—';
 
   if (ranking && currentUser) {
-    const me = ranking.find(u => u.emailKey === sanitizeKey(currentUser.email));
+    const me = ranking.find(u => u.emailKey === sanitizeKey(currentUser.email.toLowerCase()));
     if (me) { pts=me.pts; exact=me.exact; total=me.total; }
-    myRank = (ranking.findIndex(u => u.emailKey === sanitizeKey(currentUser.email)) + 1) || '—';
+    myRank = (ranking.findIndex(u => u.emailKey === sanitizeKey(currentUser.email.toLowerCase())) + 1) || '—';
   }
 
   document.getElementById('myRank').textContent = myRank;
@@ -2730,7 +2729,7 @@ function computeMyStats() {
     if (p === SCORING.GROUP_EXACT || p === SCORING.KO_EXACT_QUAL || p === SCORING.KO_EXACT_MISS) exact++;
   }
   updateMyStats([{
-    emailKey: sanitizeKey(currentUser.email),
+    emailKey: sanitizeKey(currentUser.email.toLowerCase()),
     pts, exact, winner: 0, total,
     totalProns: Object.keys(myPronosticos).length
   }]);
@@ -3143,7 +3142,7 @@ async function toggleActivo(emailKey, activo) {
     /* Also update the allUsers cache */
     if (allUsers[emailKey]) allUsers[emailKey].activo = activo;
     /* If this is the current user, update isActivo */
-    if (currentUser && sanitizeKey(currentUser.email) === emailKey) {
+    if (currentUser && sanitizeKey(currentUser.email.toLowerCase()) === emailKey) {
       isActivo = activo;
       renderMatches();
     }
