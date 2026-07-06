@@ -1160,11 +1160,12 @@ body {
         </tr>
       </table>
       <div style="margin:0.75rem 0;padding:0.5rem;background:color-mix(in srgb, var(--gold) 10%, transparent);border-radius:8px;font-size:0.78rem">
-        <strong style="color:var(--gold)">⚡ Octavos en adelante:</strong> si pronosticas empate, activa el botón <strong>"Quién clasifica"</strong> para puntos extra.
+        <strong style="color:var(--gold)">⚡ Octavos en adelante:</strong> además del marcador, elige <strong>"Quién clasifica"</strong>. Si el marcador tiene un ganador, se selecciona automáticamente.
       </div>
       <table class="points-table">
         <tr><td><span class="points-icon">🎯🏆</span></td><td><strong>Exacto + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto + equipo que avanza correcto</span></td><td style="text-align:right"><span class="pts-badge">+5 pts</span></td></tr>
         <tr><td><span class="points-icon">🎯❌</span></td><td><strong>Exacto + Clasifica mal</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Marcador exacto pero equipo que avanza incorrecto</span></td><td style="text-align:right"><span class="pts-badge">+4 pts</span></td></tr>
+        <tr><td><span class="points-icon">✅🏆</span></td><td><strong>Resultado + Clasifica</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Acertaste el ganador/empate y quién clasifica</span></td><td style="text-align:right"><span class="pts-badge">+3 pts</span></td></tr>
         <tr><td><span class="points-icon">✅🤝</span></td><td><strong>Empate correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">Pronosticaste empate y el partido terminó empatado</span></td><td style="text-align:right"><span class="pts-badge">+2 pts</span></td></tr>
         <tr><td><span class="points-icon">💪</span></td><td><strong>Clasifica correcto</strong><br><span style="font-size:0.75rem;color:var(--text-sub)">No acertaste el resultado pero sí quién avanzó</span></td><td style="text-align:right"><span class="pts-badge">+1 pt</span></td></tr>
       </table>
@@ -1499,10 +1500,11 @@ const SCORING = {
   EXACT_SCORE: 5,
   CORRECT_WINNER: 2,
   /* Knockout con desempate */
-  EXACT_QUALIFIER: 5,  // Marcador exacto + clasifica correcto
-  EXACT_MISS_QUAL: 4,  // Marcador exacto + clasifica mal
-  DRAW_TREND: 2,       // Empate (cualquier score) + empate real
-  CONSOLATION: 1       // Resultado malo + clasifica correcto
+  EXACT_QUALIFIER: 5,      // Marcador exacto + clasifica correcto
+  EXACT_MISS_QUAL: 4,      // Marcador exacto + clasifica mal
+  CORRECT_WINNER_QUAL: 3,  // Resultado correcto + clasifica correcto
+  DRAW_TREND: 2,           // Empate (cualquier score) + empate real
+  CONSOLATION: 1           // Resultado malo + clasifica correcto
 };
 
 function isKnockoutPhase(phase) {
@@ -2400,6 +2402,8 @@ function renderMatchCard(m, idx) {
       feedbackHTML = `<div class="result-feedback feedback-exact">🎯 Resultado exacto <span class="points-badge">+${pts} pts</span></div>`;
     } else if (pts === SCORING.CORRECT_WINNER || pts === SCORING.DRAW_TREND) {
       feedbackHTML = `<div class="result-feedback feedback-winner">✅ Ganador/empate correcto <span class="points-badge">+${pts} pts</span></div>`;
+    } else if (pts === SCORING.CORRECT_WINNER_QUAL) {
+      feedbackHTML = `<div class="result-feedback feedback-winner">✅ Resultado + clasifica <span class="points-badge">+${pts} pts</span></div>`;
     } else if (pts === SCORING.CONSOLATION) {
       feedbackHTML = `<div class="result-feedback feedback-winner">💪 Clasifica correcto <span class="points-badge">+${pts} pts</span></div>`;
     } else {
@@ -2411,7 +2415,7 @@ function renderMatchCard(m, idx) {
 
   const dateStr = formatLocalDate(m.utcDate);
   const delay = Math.min(idx * 40, 400);
-  const inputAttrs = `type="number" min="0" max="20" class="score-input" placeholder="0" ${isLocked ? 'disabled' : ''} oninput="this.value=Math.max(0,Math.min(20,parseInt(this.value)||0))"`;
+  const inputAttrs = `type="number" min="0" max="20" class="score-input" placeholder="0" ${isLocked ? 'disabled' : ''} oninput="handleScoreInput(this, '${m.id}')"`;
 
   return `
     <div class="match-card ${statusClass}" style="animation-delay:${delay}ms">
@@ -2469,6 +2473,30 @@ function renderMatchCard(m, idx) {
 /* ══════════════════════════════════════════════
    PRONÓSTICOS — FIREBASE
    ══════════════════════════════════════════════ */
+function handleScoreInput(el, matchId) {
+  el.value = Math.max(0, Math.min(20, parseInt(el.value) || 0));
+  autoQualifier(matchId);
+}
+
+function autoQualifier(matchId) {
+  const m = allMatches.find(x => x.id === matchId);
+  if (!m || !isKnockoutPhase(m.phase)) return;
+  const hVal = parseInt(document.getElementById(`hInput_${matchId}`)?.value ?? '');
+  const aVal = parseInt(document.getElementById(`aInput_${matchId}`)?.value ?? '');
+  if (isNaN(hVal) || isNaN(aVal)) return;
+  if (hVal > aVal) {
+    setQualifier(matchId, 'H');
+  } else if (aVal > hVal) {
+    setQualifier(matchId, 'A');
+  } else {
+    /* Empate: limpiar selección automática */
+    const qH = document.getElementById('qH_'+matchId);
+    const qA = document.getElementById('qA_'+matchId);
+    if (qH) qH.classList.remove('active');
+    if (qA) qA.classList.remove('active');
+  }
+}
+
 function setQualifier(matchId, side) {
   const qH = document.getElementById('qH_'+matchId);
   const qA = document.getElementById('qA_'+matchId);
@@ -2600,7 +2628,7 @@ function buildRanking(allProns) {
       pts += p;
       total++;
       if (p === SCORING.EXACT_SCORE || p === SCORING.EXACT_QUALIFIER || p === SCORING.EXACT_MISS_QUAL) exact++;
-      if (p === SCORING.CORRECT_WINNER || p === SCORING.DRAW_TREND || p === SCORING.CONSOLATION) winner++;
+      if (p === SCORING.CORRECT_WINNER || p === SCORING.DRAW_TREND || p === SCORING.CONSOLATION || p === SCORING.CORRECT_WINNER_QUAL) winner++;
     }
     const userInfo = allUsers[emailKey] || {};
     ranking.push({
@@ -3117,6 +3145,7 @@ function calcPoints(pron, score, match) {
     if (exact) {
       return qualMatch ? SCORING.EXACT_QUALIFIER : SCORING.EXACT_MISS_QUAL;
     }
+    if (predWin === realWin && qualMatch) return SCORING.CORRECT_WINNER_QUAL;
     if (predWin === realWin) return SCORING.CORRECT_WINNER;
     if (qualMatch) return SCORING.CONSOLATION;
     return 0;
