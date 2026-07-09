@@ -1795,6 +1795,8 @@ async function loadMatches() {
   if (cached) {
     try {
       allMatches = JSON.parse(cached);
+      /* Deduplicate: if two matches in the same phase have the same teams (home/away swapped), keep the first */
+      { const seen = new Set(); allMatches = allMatches.filter(m => { const k = m.phase + '|' + [m.homeTeam, m.awayTeam].sort().join('|'); return seen.has(k) ? false : (seen.add(k), true); }); }
       if (allMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd)) {
         if (!db) {
           fillR32Pairings(allMatches).then(filled => { allMatches = fillKnockoutBracket(filled); cacheMatches(); renderMatches(); renderPhaseTabs(); });
@@ -2311,6 +2313,7 @@ function applyScores(source) {
   /* Fill knockout phases from ESPN when allMatches has only TBD placeholders or is missing the phase.
      We update existing entries in-place to preserve their original IDs (for predictions). */
   const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+  const teamPair = m => [norm(m.homeTeam), norm(m.awayTeam)].sort().join('|');
   for (const phase of koPhases) {
     const local = updated.filter(m => m.phase === phase);
     const espn = source.filter(s => s.phase === phase && !s.tbd);
@@ -2320,8 +2323,9 @@ function applyScores(source) {
       /* Sort TBD by date for consistent matching order */
       const byDate = (a,b) => (a.utcDate||'').localeCompare(b.utcDate||'');
       const tbd = local.filter(m => m.tbd).sort(byDate);
-      /* Build pool of unmatched ESPN entries (skip those already matching a real local entry) */
-      let pool = espn.filter(s => !localReal.some(m => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam)));
+      /* Build pool of unmatched ESPN entries (skip those already matching a real local entry, regardless of home/away order) */
+      const realPairs = new Set(localReal.map(teamPair));
+      let pool = espn.filter(s => !realPairs.has(teamPair(s)));
       const tbdMap = {};
       tbd.forEach((m, i) => { if (i < pool.length) tbdMap[m.id] = pool[i]; });
       updated = updated.map(m => {
@@ -2330,9 +2334,9 @@ function applyScores(source) {
         return { ...m, homeTeam: s.homeTeam, awayTeam: s.awayTeam, homeFlag: s.homeFlag, awayFlag: s.awayFlag, tbd: false, utcDate: s.utcDate || m.utcDate };
       });
       /* Add any remaining unmatched ESPN entries (phase completely missing from allMatches) */
-      const afterTeams = new Set(updated.filter(m => m.phase === phase).map(m => norm(m.homeTeam) + '|' + norm(m.awayTeam)));
+      const afterPairs = new Set(updated.filter(m => m.phase === phase).map(teamPair));
       for (const s of pool.slice(tbd.length)) {
-        if (!afterTeams.has(norm(s.homeTeam) + '|' + norm(s.awayTeam))) updated.push(s);
+        if (!afterPairs.has(teamPair(s))) updated.push(s);
       }
     }
   }
@@ -2345,6 +2349,16 @@ function cacheMatches() {
     localStorage.setItem(CACHE_TIME, String(Date.now()));
   } catch(e) {}
 }
+
+/* Deduplicate allMatches: same phase + same teams (regardless of home/away) = same match */
+const dedupKey = m => m.phase + '|' + [m.homeTeam || '', m.awayTeam || ''].sort().join('|');
+function dedupMatches(arr) {
+  const seen = new Set();
+  return arr.filter(m => { const k = dedupKey(m); return seen.has(k) ? false : (seen.add(k), true); });
+}
+/* Apply dedup before caching */
+const origCache = cacheMatches;
+cacheMatches = function() { allMatches = dedupMatches(allMatches); origCache.call(this); };
 
 /* ══════════════════════════════════════════════
    RENDER MATCHES
