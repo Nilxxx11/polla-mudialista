@@ -1837,10 +1837,15 @@ function listenToMatches() {
         const stillNeedsR32 = neededR32 && fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
         let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
-          try { const fresh = await syncFromInternet(); if (fresh.length) fbMatches = fresh; } catch(e) {}
+          try { const fresh = await syncFromInternet(); if (fresh.length) {
+            const hasAllPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'].every(p => !fbMatches.some(m => m.phase === p) || fresh.some(m => m.phase === p));
+            if (hasAllPhases) fbMatches = fresh;
+          } } catch(e) {}
         }
         const currentHasR32 = allMatches.length > 0 && allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
-        const currentHasKO = allMatches.length > 0 && !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
+        const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+        const fbKoPhases = [...new Set(fbMatches.filter(m => koPhases.includes(m.phase)).map(m => m.phase))];
+        const currentHasKO = allMatches.length > 0 && fbKoPhases.every(p => allMatches.some(m => m.phase === p)) && !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if (neededR32 && !filledR32 && currentHasR32) return;
         if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
         allMatches = fbMatches;
@@ -1870,9 +1875,23 @@ async function refreshResults(showToast) {
   try {
     const fresh = await syncFromInternet();
       if (fresh.length) {
-        allMatches = fresh; cacheMatches();
-        if (db) {
-          await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+        const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+        const hasAllPhases = koPhases.every(p => !allMatches.some(m => m.phase === p) || fresh.some(m => m.phase === p));
+        if (hasAllPhases) {
+          allMatches = fresh; cacheMatches();
+          if (db) {
+            await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+          }
+        } else {
+          /* Merge scores manually: fresh may be missing knockout phases that allMatches has */
+          for (const fm of fresh) {
+            const idx = allMatches.findIndex(m => m.id === fm.id || (m.homeTeam === fm.homeTeam && m.awayTeam === fm.awayTeam && m.phase === fm.phase));
+            if (idx >= 0) allMatches[idx] = { ...allMatches[idx], score: fm.score, status: fm.status, utcDate: fm.utcDate || allMatches[idx].utcDate };
+          }
+          cacheMatches();
+          if (db) {
+            await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
+          }
         }
         if (showToast) toast("✅ Partidos actualizados", "success");
       }
@@ -2186,7 +2205,7 @@ async function fetchFromAPI(backup = false) {
     const data = await res.json();
     const matches = (data.data || []).map(m => {
       const hasScore = m.homeScore !== null && m.awayScore !== null;
-      const utcStr = m.kickoffUtc || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
+      const utcStr = (m.kickoffUtc && !m.kickoffUtc.endsWith('Z') ? m.kickoffUtc + 'Z' : m.kickoffUtc) || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
       return {
         id:       m.id,
         homeTeam: m.homeTeam || m.homeRef,
@@ -2243,7 +2262,7 @@ async function fetchFromESPN() {
       awayTeam:    isTbd ? 'TBD' : awayName,
       homeFlag:    isTbd ? '🏳' : teamFlag(homeName),
       awayFlag:    isTbd ? '🏳' : teamFlag(awayName),
-      utcDate:     e.date || comp.date,
+      utcDate:     (() => { const d = e.date || comp.date; return d ? (d.endsWith('Z') ? d : d + 'Z') : ''; })(),
       status:      status,
       phase:       ESPN_PHASE_MAP[slug] || 'Fase de Grupos',
       tbd:         isTbd,
@@ -3256,7 +3275,7 @@ function formatLocalDate(utcStr) {
   try {
     return new Date(utcStr).toLocaleString('es-CO', {
       weekday:'short', day:'numeric', month:'short',
-      hour:'2-digit', minute:'2-digit', timeZoneName:'short'
+      hour:'2-digit', minute:'2-digit', timeZone:'America/Bogota', timeZoneName:'short'
     });
   } catch { return utcStr; }
 }
