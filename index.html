@@ -2290,7 +2290,7 @@ async function syncFromInternet() {
 function applyScores(source) {
   if (!allMatches.length) return source;
   const norm = n => n?.toLowerCase().replace(/[^a-záéíóúñü0-9]/g,'');
-  const updated = allMatches.map(m => {
+  let updated = allMatches.map(m => {
     const espn = source.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
     if (!espn) return m;
     const updatedDate = espn.utcDate || m.utcDate;
@@ -2308,6 +2308,34 @@ function applyScores(source) {
     if (old && old.home === h && old.away === a && m.status === 'FINISHED' && !updatedDateOnly.utcDate) return m;
     return { ...m, ...updatedDateOnly, score: { home: h, away: a, pen: m.score?.pen ?? null, pen2: m.score?.pen2 ?? null }, status: 'FINISHED' };
   });
+  /* Fill knockout phases from ESPN when allMatches has only TBD placeholders or is missing the phase.
+     We update existing entries in-place to preserve their original IDs (for predictions). */
+  const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
+  for (const phase of koPhases) {
+    const local = updated.filter(m => m.phase === phase);
+    const espn = source.filter(s => s.phase === phase && !s.tbd);
+    if (!espn.length) continue;
+    const localReal = local.filter(m => !m.tbd);
+    if (espn.length > localReal.length) {
+      /* Sort TBD by date for consistent matching order */
+      const byDate = (a,b) => (a.utcDate||'').localeCompare(b.utcDate||'');
+      const tbd = local.filter(m => m.tbd).sort(byDate);
+      /* Build pool of unmatched ESPN entries (skip those already matching a real local entry) */
+      let pool = espn.filter(s => !localReal.some(m => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam)));
+      const tbdMap = {};
+      tbd.forEach((m, i) => { if (i < pool.length) tbdMap[m.id] = pool[i]; });
+      updated = updated.map(m => {
+        const s = m.tbd && m.phase === phase ? (tbdMap[m.id] || null) : null;
+        if (!s) return m;
+        return { ...m, homeTeam: s.homeTeam, awayTeam: s.awayTeam, homeFlag: s.homeFlag, awayFlag: s.awayFlag, tbd: false, utcDate: s.utcDate || m.utcDate };
+      });
+      /* Add any remaining unmatched ESPN entries (phase completely missing from allMatches) */
+      const afterTeams = new Set(updated.filter(m => m.phase === phase).map(m => norm(m.homeTeam) + '|' + norm(m.awayTeam)));
+      for (const s of pool.slice(tbd.length)) {
+        if (!afterTeams.has(norm(s.homeTeam) + '|' + norm(s.awayTeam))) updated.push(s);
+      }
+    }
+  }
   return updated;
 }
 
