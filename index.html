@@ -1839,10 +1839,7 @@ function listenToMatches() {
         const stillNeedsR32 = neededR32 && fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
         let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
         if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
-          try { const fresh = await syncFromInternet(); if (fresh.length) {
-            const hasAllPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'].every(p => !fbMatches.some(m => m.phase === p) || fresh.some(m => m.phase === p));
-            if (hasAllPhases) fbMatches = fresh;
-          } } catch(e) {}
+          try { const fresh = await syncFromInternet(); if (fresh.length) fbMatches = fresh; } catch(e) {}
         }
         const currentHasR32 = allMatches.length > 0 && allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
         const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
@@ -2331,7 +2328,7 @@ function applyScores(source) {
       updated = updated.map(m => {
         const s = m.tbd && m.phase === phase ? (tbdMap[m.id] || null) : null;
         if (!s) return m;
-        return { ...m, homeTeam: s.homeTeam, awayTeam: s.awayTeam, homeFlag: s.homeFlag, awayFlag: s.awayFlag, tbd: false, utcDate: s.utcDate || m.utcDate };
+        return { ...m, homeTeam: s.homeTeam, awayTeam: s.awayTeam, homeFlag: s.homeFlag, awayFlag: s.awayFlag, tbd: false, utcDate: s.utcDate || m.utcDate, score: s.score, status: s.status };
       });
       /* Add any remaining unmatched ESPN entries (phase completely missing from allMatches) */
       const afterPairs = new Set(updated.filter(m => m.phase === phase).map(teamPair));
