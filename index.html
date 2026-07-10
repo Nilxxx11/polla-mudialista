@@ -1476,12 +1476,7 @@ const firebaseConfig = {
 /* ─────────────────────────────────────────────
    API EXTERNA
    ───────────────────────────────────────────── */
-const API_CONFIG = {
-  ZAFRONIX_URL: "https://api.zafronix.com/fifa/worldcup/v1",
-  ZAFRONIX_KEY: "zwc_free_696a6ee7acfc874b91023a75",
-  ZAFRONIX_KEY_BACKUP: "zwc_free_fa0bfbba2f75ad7334adc2ab",
-  REFRESH_INTERVAL: 15 * 60 * 1000
-};
+const REFRESH_INTERVAL = 15 * 60 * 1000;
 
 /* ─────────────────────────────────────────────
    ADMINS — agregar emails de administradores
@@ -1797,14 +1792,8 @@ async function loadMatches() {
       allMatches = JSON.parse(cached);
       /* Deduplicate: if two matches in the same phase have the same teams (home/away swapped), keep the first */
       { const seen = new Set(); allMatches = allMatches.filter(m => { const k = m.phase + '|' + [m.homeTeam, m.awayTeam].sort().join('|'); return seen.has(k) ? false : (seen.add(k), true); }); }
-      if (allMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd)) {
-        if (!db) {
-          fillR32Pairings(allMatches).then(filled => { allMatches = fillKnockoutBracket(filled); cacheMatches(); renderMatches(); renderPhaseTabs(); });
-        }
-      } else {
-        renderMatches();
-        renderPhaseTabs();
-      }
+      renderMatches();
+      renderPhaseTabs();
     } catch(e) {}
   }
 
@@ -1831,22 +1820,6 @@ function listenToMatches() {
       if (fbData && fbData.data && Array.isArray(fbData.data)) {
         let fbMatches = fbData.data.map(m => ({ ...m, score: m.score || { home: null, away: null } }));
         setSyncStatus("En vivo • actualizado");
-        const neededR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
-        let filledR32 = false;
-        if (neededR32) { fbMatches = await fillR32Pairings(fbMatches); filledR32 = fbMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd); }
-        const neededKO = fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
-        if (neededKO || neededR32) fbMatches = fillKnockoutBracket(fbMatches);
-        const stillNeedsR32 = neededR32 && fbMatches.some(m => m.phase === 'Treintaidosavos' && m.tbd);
-        let stillNeedsKO = neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
-        if ((neededR32 && !filledR32) || stillNeedsR32 || stillNeedsKO) {
-          try { const fresh = await syncFromInternet(); if (fresh.length) fbMatches = fresh; } catch(e) {}
-        }
-        const currentHasR32 = allMatches.length > 0 && allMatches.some(m => m.phase === 'Treintaidosavos' && !m.tbd);
-        const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
-        const fbKoPhases = [...new Set(fbMatches.filter(m => koPhases.includes(m.phase)).map(m => m.phase))];
-        const currentHasKO = allMatches.length > 0 && fbKoPhases.every(p => allMatches.some(m => m.phase === p)) && !allMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos');
-        if (neededR32 && !filledR32 && currentHasR32) return;
-        if (neededKO && fbMatches.some(m => m.tbd && m.phase !== 'Fase de Grupos' && m.phase !== 'Treintaidosavos') && currentHasKO) return;
         allMatches = fbMatches;
         cacheMatches();
         renderMatches();
@@ -1874,23 +1847,9 @@ async function refreshResults(showToast) {
   try {
     const fresh = await syncFromInternet();
       if (fresh.length) {
-        const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
-        const hasAllPhases = koPhases.every(p => !allMatches.some(m => m.phase === p) || fresh.some(m => m.phase === p));
-        if (hasAllPhases) {
-          allMatches = fresh; cacheMatches();
-          if (db) {
-            await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
-          }
-        } else {
-          /* Merge scores manually: fresh may be missing knockout phases that allMatches has */
-          for (const fm of fresh) {
-            const idx = allMatches.findIndex(m => m.id === fm.id || (m.homeTeam === fm.homeTeam && m.awayTeam === fm.awayTeam && m.phase === fm.phase));
-            if (idx >= 0) allMatches[idx] = { ...allMatches[idx], score: fm.score, status: fm.status, utcDate: fm.utcDate || allMatches[idx].utcDate };
-          }
-          cacheMatches();
-          if (db) {
-            await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
-          }
+        allMatches = fresh; cacheMatches();
+        if (db) {
+          await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
         }
         if (showToast) toast("✅ Partidos actualizados", "success");
       }
@@ -1918,318 +1877,13 @@ async function refreshResults(showToast) {
   document.getElementById('syncDot').style.background = '#27AE60';
 }
 
-function zafronixStageToPhase(stage) {
-  const map = {
-    'group_a':'Grupo A','group_b':'Grupo B','group_c':'Grupo C','group_d':'Grupo D',
-    'group_e':'Grupo E','group_f':'Grupo F','group_g':'Grupo G','group_h':'Grupo H',
-    'group_i':'Grupo I','group_j':'Grupo J','group_k':'Grupo K','group_l':'Grupo L',
-    'group stage':'Fase de Grupos','groups':'Fase de Grupos',
-    'r32':'Treintaidosavos','round_of_32':'Treintaidosavos','round_32':'Treintaidosavos','last_32':'Treintaidosavos','round 32':'Treintaidosavos',
-    'r16':'Octavos de Final','round_of_16':'Octavos de Final','round_16':'Octavos de Final','last_16':'Octavos de Final',
-    'qf':'Cuartos de Final','quarterfinals':'Cuartos de Final','quarter_finals':'Cuartos de Final',
-    'sf':'Semifinal','semifinals':'Semifinal','semi_finals':'Semifinal',
-    'final':'Final 🏆','third_place':'Tercer Lugar','thirdplace':'Tercer Lugar','thirdPlace':'Tercer Lugar'
-  };
-  const val = (stage || '').toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
-  return map[val] || map[stage] || stage || 'Fase de Grupos';
-}
 
-/* ─────────────────────────────────────────────
-   GENERAR CRUCES DE TREINTAIDOSAVOS (FIFA Annex C)
-   ───────────────────────────────────────────── */
-const ANNEX_C_WINNERS = ["A","B","D","E","G","I","K","L"];
-const ANNEX_C_ROWS = [
-  "EJIFHGLK","HGIDJFLK","EJIDHGLK","EJIDHFLK","EGIDJFLK","EGJDHFLK","EGIDHFLK","EGJDHFLI","EGJDHFIK",
-  "HGICJFLK","EJICHGLK","EJICHFLK","EGICJFLK","EGJCHFLK","EGICHFLK","EGJCHFLI","EGJCHFIK",
-  "HGICJDLK","CJIDHFLK","CGIDJFLK","CGJDHFLK","CGIDHFLK","CGJDHFLI","CGJDHFIK",
-  "EJICHDLK","EGICJDLK","EGJCHDLK","EGICHDLK","EGJCHDLI","EGJCHDIK",
-  "CJEDIFLK","CJEDHFLK","CEIDHFLK","CJEDHFLI","CJEDHFIK","CGEDJFLK","CGEDIFLK","CGEDJFLI","CGEDJFIK","CGEDHFLK",
-  "CGJDHFLE","CGJDHFEK","CGEDHFLI","CGEDHFIK","CGJDHFEI",
-  "HJBFIGLK","EJIBHGLK","EJBFIHLK","EJBFIGLK","EJBFHGLK","EGBFIHLK","EJBFHGLI","EJBFHGIK",
-  "HJBDIGLK","HJBDIFLK","IGBDJFLK","HGBDJFLK","HGBDIFLK","HGBDJFLI","HGBDJFIK",
-  "EJBDIHLK","EJBDIGLK","EJBDHGLK","EGBDIHLK","EJBDHGLI","EJBDHGIK",
-  "EJBDIFLK","EJBDHFLK","EIBDHFLK","EJBDHFLI","EJBDHFIK","EGBDJFLK","EGBDIFLK","EGBDJFLI","EGBDJFIK","EGBDHFLK",
-  "HGBDJFLE","HGBDJFEK","EGBDHFLI","EGBDHFIK","HGBDJFEI",
-  "HJBCIGLK","HJBCIFLK","IGBCJFLK","HGBCJFLK","HGBCIFLK","HGBCJFLI","HGBCJFIK",
-  "EJBCIHLK","EJBCIGLK","EJBCHGLK","EGBCIHLK","EJBCHGLI","EJBCHGIK",
-  "EJBCIFLK","EJBCHFLK","EIBCHFLK","EJBCHFLI","EJBCHFIK","EGBCJFLK","EGBCIFLK","EGBCJFLI","EGBCJFIK","EGBCHFLK",
-  "HGBCJFLE","HGBCJFEK","EGBCHFLI","EGBCHFIK","HGBCJFEI",
-  "HJBCIDLK","IGBCJDLK","HGBCJDLK","HGBCIDLK","HGBCJDLI","HGBCJDIK",
-  "CJBDIFLK","CJBDHFLK","CIBDHFLK","CJBDHFLI","CJBDHFIK","CGBDJFLK","CGBDIFLK","CGBDJFLI","CGBDJFIK","CGBDHFLK",
-  "CGBDHFLJ","HGBCJFDK","CGBDHFLI","CGBDHFIK","HGBCJFDI",
-  "EJBCIDLK","EJBCHDLK","EIBCHDLK","EJBCHDLI","EJBCHDIK","EGBCJDLK","EGBCIDLK","EGBCJDLI","EGBCJDIK","EGBCHDLK",
-  "HGBCJDLE","HGBCJDEK","EGBCHDLI","EGBCHDIK","HGBCJDEI",
-  "CJBDEFLK","CEBDIFLK","CJBDEFLI","CJBDEFIK","CEBDHFLK","CJBDHFLE","CJBDHFEK","CEBDHFLI","CEBDHFIK","CJBDHFEI",
-  "CGBDEFLK","CGBDJFLE","CGBDJFEK","CGBDEFLI","CGBDEFIK","CGBDJFEI","CGBDHFLE","CGBDHFEK","HGBCJFDE","CGBDHFEI",
-  "HJIFAGLK","EJIAHGLK","EJIFAHLK","EJIFAGLK","EGJFAHLK","EGIFAHLK","EGJFAHLI","EGJFAHIK",
-  "HJIDAGLK","HJIDAFLK","IGJDAFLK","HGJDAFLK","HGIDAFLK","HGJDAFLI","HGJDAFIK",
-  "EJIDAHLK","EJIDAGLK","EGJDAHLK","EGIDAHLK","EGJDAHLI","EGJDAHIK",
-  "EJIDAFLK","HJEDAFLK","HEIDAFLK","HJEDAFLI","HJEDAFIK","EGJDAFLK","EGIDAFLK","EGJDAFLI","EGJDAFIK","HGEDAFLK",
-  "HGJDAFLE","HGJDAFEK","HGEDAFLI","HGEDAFIK","HGJDAFEI",
-  "HJICAGLK","HJICAFLK","IGJCAFLK","HGJCAFLK","HGICAFLK","HGJCAFLI","HGJCAFIK",
-  "EJICAHLK","EJICAGLK","EGJCAHLK","EGICAHLK","EGJCAHLI","EGJCAHIK",
-  "EJICAFLK","HJECAFLK","HEICAFLK","HJECAFLI","HJECAFIK","EGJCAFLK","EGICAFLK","EGJCAFLI","EGJCAFIK","HGECAFLK",
-  "HGJCAFLE","HGJCAFEK","HGECAFLI","HGECAFIK","HGJCAFEI",
-  "HJICADLK","IGJCADLK","HGJCADLK","HGICADLK","HGJCADLI","HGJCADIK",
-  "CJIDAFLK","HJFCADLK","HFICADLK","HJFCADLI","HJFCADIK","CGJDAFLK","CGIDAFLK","CGJDAFLI","CGJDAFIK","HGFCADLK",
-  "CGJDAFLH","HGJCAFDK","HGFCADLI","HGFCADIK","HGJCAFDI",
-  "EJICADLK","HJECADLK","HEICADLK","HJECADLI","HJECADIK","EGJCADLK","EGICADLK","EGJCADLI","EGJCADIK","HGECADLK",
-  "HGJCADLE","HGJCADEK","HGECADLI","HGECADIK","HGJCADEI",
-  "CJEDAFLK","CEIDAFLK","CJEDAFLI","CJEDAFIK","HEFCADLK","HJFCADLE","HJECAFDK","HEFCADLI","HEFCADIK","HJECAFDI",
-  "CGEDAFLK","CGJDAFLE","CGJDAFEK","CGEDAFLI","CGEDAFIK","CGJDAFEI","HGFCADLE","HGECAFDK","HGJCAFDE","HGECAFDI",
-  "HJBAIGLK","HJBAIFLK","IJBFAGLK","HJBFAGLK","HGBAIFLK","HJBFAGLI","HJBFAGIK",
-  "EJBAIHLK","EJBAIGLK","EJBAHGLK","EGBAIHLK","EJBAHGLI","EJBAHGIK",
-  "EJBAIFLK","EJBFAHLK","EIBFAHLK","EJBFAHLI","EJBFAHIK","EJBFAGLK","EGBAIFLK","EJBFAGLI","EJBFAGIK","EGBFAHLK",
-  "HJBFAGLE","HJBFAGEK","EGBFAHLI","EGBFAHIK","HJBFAGEI",
-  "IJBDAHLK","IJBDAGLK","HJBDAGLK","IGBDAHLK","HJBDAGLI","HJBDAGIK",
-  "IJBDAFLK","HJBDAFLK","HIBDAFLK","HJBDAFLI","HJBDAFIK","FJBDAGLK","IGBDAFLK","FJBDAGLI","FJBDAGIK","HGBDAFLK",
-  "HGBDAFLJ","HGBDAFJK","HGBDAFLI","HGBDAFIK","HGBDAFIJ",
-  "EJBAIDLK","EJBDAHLK","EIBDAHLK","EJBDAHLI","EJBDAHIK","EJBDAGLK","EGBAIDLK","EJBDAGLI","EJBDAGIK","EGBDAHLK",
-  "HJBDAGLE","HJBDAGEK","EGBDAHLI","EGBDAHIK","HJBDAGEI",
-  "EJBDAFLK","EIBDAFLK","EJBDAFLI","EJBDAFIK","HEBDAFLK","HJBDAFLE","HJBDAFEK","HEBDAFLI","HEBDAFIK","HJBDAFEI",
-  "EGBDAFLK","EGBDAFLJ","EGBDAFJK","EGBDAFLI","EGBDAFIK","EGBDAFIJ","HGBDAFLE","HGBDAFEK","HGBDAFEJ","HGBDAFEI",
-  "IJBCAHLK","IJBCAGLK","HJBCAGLK","IGBCAHLK","HJBCAGLI","HJBCAGIK",
-  "IJBCAFLK","HJBCAFLK","HIBCAFLK","HJBCAFLI","HJBCAFIK","CJBFAGLK","IGBCAFLK","CJBFAGLI","CJBFAGIK","HGBCAFLK",
-  "HGBCAFLJ","HGBCAFJK","HGBCAFLI","HGBCAFIK","HGBCAFIJ",
-  "EJBAICLK","EJBCAHLK","EIBCAHLK","EJBCAHLI","EJBCAHIK","EJBCAGLK","EGBAICLK","EJBCAGLI","EJBCAGIK","EGBCAHLK",
-  "HJBCAGLE","HJBCAGEK","EGBCAHLI","EGBCAHIK","HJBCAGEI",
-  "EJBCAFLK","EIBCAFLK","EJBCAFLI","EJBCAFIK","HEBCAFLK","HJBCAFLE","HJBCAFEK","HEBCAFLI","HEBCAFIK","HJBCAFEI",
-  "EGBCAFLK","EGBCAFLJ","EGBCAFJK","EGBCAFLI","EGBCAFIK","EGBCAFIJ","HGBCAFLE","HGBCAFEK","HGBCAFEJ","HGBCAFEI",
-  "IJBCADLK","HJBCADLK","HIBCADLK","HJBCADLI","HJBCADIK","CJBDAGLK","IGBCADLK","CJBDAGLI","CJBDAGIK","HGBCADLK",
-  "HGBCADLJ","HGBCADJK","HGBCADLI","HGBCADIK","HGBCADIJ",
-  "CJBDAFLK","CIBDAFLK","CJBDAFLI","CJBDAFIK","HFBCADLK","CJBDAFLH","HJBCAFDK","HFBCADLI","HFBCADIK","HJBCAFDI",
-  "CGBDAFLK","CGBDAFLJ","CGBDAFJK","CGBDAFLI","CGBDAFIK","CGBDAFIJ","CGBDAFLH","HGBCAFDK","HGBCAFDJ","HGBCAFDI",
-  "EJBCADLK","EIBCADLK","EJBCADLI","EJBCADIK","HEBCADLK","HJBCADLE","HJBCADEK","HEBCADLI","HEBCADIK","HJBCADEI",
-  "EGBCADLK","EGBCADLJ","EGBCADJK","EGBCADLI","EGBCADIK","EGBCADIJ","HGBCADLE","HGBCADEK","HGBCADEJ","HGBCADEI",
-  "CEBDAFLK","CJBDAFLE","CJBDAFEK","CEBDAFLI","CEBDAFIK","CJBDAFEI","HFBCADLE","HEBCAFDK","HJBCAFDE","HEBCAFDI",
-  "CGBDAFLE","CGBDAFEK","CGBDAFEJ","CGBDAFEI","HGBCAFDE"
-];
 
-async function fillR32Pairings(matches, standbyKey) {
-  try {
-    const primaryKey = API_CONFIG.ZAFRONIX_KEY;
-    const backupKey = API_CONFIG.ZAFRONIX_KEY_BACKUP;
-    let key = standbyKey || primaryKey;
-    let res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
-      headers: { 'X-API-Key': key }
-    });
-    if ((res.status === 429 || res.status === 403) && !standbyKey && backupKey) {
-      if (res.status === 403) console.warn("Standings API key suspendida, usando respaldo...");
-      else console.warn("Standings API rate limited, using backup key...");
-      key = backupKey;
-      res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/standings?year=2026`, {
-        headers: { 'X-API-Key': key }
-      });
-    }
-    if (!res.ok) {
-      if (res.status === 429) setApiLimited(true);
-      return matches;
-    }
-    const data = await res.json();
-    const groups = data.groups || {};
-    const teams = {};
-    for (const [letter, tbl] of Object.entries(groups)) {
-      for (const row of tbl) {
-        teams[`${letter}${row.position}`] = row.team;
-      }
-    }
-    const advancing = Object.entries(groups).filter(([,tbl]) =>
-      tbl.some(r => r.position === 3 && r.advanced)
-    ).map(([l]) => l).sort().join('');
-    const row = ANNEX_C_ROWS.find(r => [...r].sort().join('') === advancing) || '';
-    const annex = {};
-    row.split('').forEach((g, i) => { annex[ANNEX_C_WINNERS[i]] = g; });
-    const pairings = [
-      ['A2','B2'], [`E1`,`E3`], [`F1`,`C2`], [`C1`,`F2`],
-      [`I1`,`I3`], ['E2','I2'], [`A1`,`A3`], [`L1`,`L3`],
-      [`D1`,`D3`], [`G1`,`G3`], ['K2','L2'], [`H1`,`J2`],
-      [`B1`,`B3`], [`J1`,`H2`], [`K1`,`K3`], ['D2','G2']
-    ];
-    let idx = 0;
-    /* Sort R32 matches by match ID so pairings align regardless of API order */
-    const r32Sorted = matches.filter(m => m.phase === 'Treintaidosavos')
-      .sort((a,b) => (parseInt((a.id||'').replace(/^.*-/,''))||0) - (parseInt((b.id||'').replace(/^.*-/,''))||0));
-    const r32Map = {};
-    r32Sorted.forEach(m => { r32Map[m.id] = idx++; });
-    return matches.map(m => {
-      if (m.phase !== 'Treintaidosavos') return m;
-      const pi = r32Map[m.id];
-      if (pi === undefined) return m;
-      let [h, a] = pairings[pi] || [];
-      h = h.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
-      a = a.replace(/^([A-Z])3$/, (_, l) => (annex[l] || l) + '3');
-      const home = teams[h], away = teams[a];
-      if (!home || !away) return m;
-      return { ...m, homeTeam: home, awayTeam: away, homeFlag: teamFlag(home), awayFlag: teamFlag(away), tbd: false };
-    });
-  } catch (e) {
-    console.warn("No se pudieron generar los cruces de R32:", e.message);
-    return matches;
-  }
-}
 
-/* ─── Resolver bracket knockout completo ─── */
-function fillKnockoutBracket(matches) {
-  const roundRobin = ['Fase de Grupos', 'Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Grupo E', 'Grupo F',
-    'Grupo G', 'Grupo H', 'Grupo I', 'Grupo J', 'Grupo K', 'Grupo L'];
-    const matchNum = m => parseInt((m.id||'').replace(/^.*-/, '')) || 0;
-    const byId = (a, b) => matchNum(a) - matchNum(b);
-    const lose = m => {
-      if (m.status !== 'FINISHED' || m.score.home === null) return null;
-      if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.awayTeam : m.homeTeam;
-      if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
-        return m.score.pen > m.score.pen2 ? m.awayTeam : m.homeTeam;
-      return null;
-    };
-
-  const r32 = matches.filter(m => m.phase === 'Treintaidosavos').sort(byId);
-  const r16 = matches.filter(m => m.phase === 'Octavos de Final').sort(byId);
-  const qf  = matches.filter(m => m.phase === 'Cuartos de Final').sort(byId);
-  const sf  = matches.filter(m => m.phase === 'Semifinal').sort(byId);
-  const third = matches.filter(m => m.phase === 'Tercer Lugar').sort(byId);
-  const fin = matches.filter(m => m.phase === 'Final 🏆').sort(byId);
-
-  /* R32 index → R16 index mapping (confirmed from FIFA bracket) */
-  const r32to16 = [[0,2],[1,4],[3,5],[6,7],[10,11],[8,9],[13,15],[12,14]];
-  const r16toQF = [[0,1],[4,5],[2,3],[6,7]];
-  const qfToSF  = [[0,1],[2,3]];
-
-  let filled = false;
-  const setTeams = (phaseArr, idx, hw, aw) => {
-    if (!hw || !aw) return;
-    const m = phaseArr[idx];
-    if (!m) return;
-    const i = matches.findIndex(x => x.id === m.id);
-    if (i < 0) return;
-    matches[i] = { ...matches[i], homeTeam: hw, awayTeam: aw, homeFlag: teamFlag(hw), awayFlag: teamFlag(aw), tbd: false };
-    filled = true;
-  };
-
-  /* R32 → R16 */
-  for (let i = 0; i < r32to16.length && i < r16.length; i++) {
-    const [ha, aa] = r32to16[i];
-    setTeams(r16, i, matchWinner(r32[ha]), matchWinner(r32[aa]));
-  }
-  /* R16 → QF */
-  for (let i = 0; i < r16toQF.length && i < qf.length; i++) {
-    const [ha, aa] = r16toQF[i];
-    setTeams(qf, i, matchWinner(r16[ha]), matchWinner(r16[aa]));
-  }
-  /* QF → SF */
-  for (let i = 0; i < qfToSF.length && i < sf.length; i++) {
-    const [ha, aa] = qfToSF[i];
-    setTeams(sf, i, matchWinner(qf[ha]), matchWinner(qf[aa]));
-  }
-  /* SF → 3rd place (losers) */
-  if (third.length && sf.length >= 2) {
-    setTeams(third, 0, lose(sf[0]), lose(sf[1]));
-  }
-  /* SF → Final (winners) */
-  if (fin.length && sf.length >= 2) {
-    setTeams(fin, 0, matchWinner(sf[0]), matchWinner(sf[1]));
-  }
-
-  /* Fallback: resolución por referencia W/L para rondas donde el bracket no alcanzó */
-  if (matches.some(m => m.tbd && !roundRobin.includes(m.phase))) {
-    const refRe = /^([WL])\s*(.+)$/i;
-    const findMatch = (refNum) => {
-      const normId = (id) => id.replace(/^.*-/, '').replace(/^0+/, '');
-      const n = refNum.replace(/^0+/, '');
-      return matches.find(x =>
-        x.id === refNum || x.id === `2026-${refNum.padStart(3,'0')}` ||
-        x.id.endsWith(`-${refNum.padStart(3,'0')}`) || x.id.endsWith(refNum) || normId(x.id) === n
-      );
-    };
-    let changed = true;
-    while (changed) {
-      changed = false;
-      matches = matches.map(m => {
-        if (roundRobin.includes(m.phase)) return m;
-        const resolve = (name) => {
-          if (!name || typeof name !== 'string') return name;
-          const p = name.match(refRe);
-          if (!p) return name;
-          const num = (p[2].match(/(\d+)$/) || [])[1];
-          if (!num) return name;
-          const ref = findMatch(num);
-          if (!ref || ref.status !== 'FINISHED' || ref.score.home === null) return name;
-          const refWinner = ref.score.home !== ref.score.away
-            ? (ref.score.home > ref.score.away ? ref.homeTeam : ref.awayTeam)
-            : (ref.score.pen != null && ref.score.pen2 != null && ref.score.pen !== ref.score.pen2
-              ? (ref.score.pen > ref.score.pen2 ? ref.homeTeam : ref.awayTeam)
-              : null);
-          if (!refWinner) return name;
-          return p[1].toUpperCase() === 'W' ? refWinner
-            : (refWinner === ref.homeTeam ? ref.awayTeam : ref.homeTeam);
-        };
-        const newHome = resolve(m.homeTeam), newAway = resolve(m.awayTeam);
-        if (newHome !== m.homeTeam || newAway !== m.awayTeam) {
-          changed = true;
-          const stillTbd = !newHome || !newAway || /^[WL]\s*\d/i.test(newHome) || /^[WL]\s*\d/i.test(newAway);
-          return { ...m, homeTeam: newHome, awayTeam: newAway, homeFlag: teamFlag(newHome), awayFlag: teamFlag(newAway), tbd: stillTbd };
-        }
-        return m;
-      });
-    }
-  }
-  return matches;
-}
-
-async function fetchFromAPI(backup = false) {
-  try {
-    const key = backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : API_CONFIG.ZAFRONIX_KEY;
-    const res = await fetch(`${API_CONFIG.ZAFRONIX_URL}/matches?year=2026`, {
-      headers: { 'X-API-Key': key }
-    });
-    if (res.status === 429 || res.status === 403) {
-      if (!backup && API_CONFIG.ZAFRONIX_KEY_BACKUP) {
-        if (res.status === 403) console.warn("API primaria suspendida, usando key de respaldo...");
-        else console.warn("API primaria rate limit, usando key de respaldo...");
-        return fetchFromAPI(true);
-      }
-      if (res.status === 429) {
-        const retryAfter = parseInt(res.headers.get('retry-after')) || 3600;
-        setApiLimited(true);
-        const mins = Math.ceil(retryAfter / 60);
-        console.warn(`API rate limit, esperando ${retryAfter}s...`);
-        toast(`⚠️ Límite API diario excedido. Espera ${mins} min...`, "warn");
-        setSyncStatus(`⚠️ API limitada — reintentando en ${mins}min...`);
-        await new Promise(r => setTimeout(r, retryAfter * 1000));
-        setApiLimited(false);
-        return fetchFromAPI(true);
-      }
-      throw new Error(`API key sin acceso (HTTP ${res.status})`);
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
-    const data = await res.json();
-    const matches = (data.data || []).map(m => {
-      const hasScore = m.homeScore !== null && m.awayScore !== null;
-      const utcStr = (m.kickoffUtc && !m.kickoffUtc.endsWith('Z') ? m.kickoffUtc + 'Z' : m.kickoffUtc) || (m.kickoff ? `${m.date}T${m.kickoff}:00Z` : `${m.date}T20:00:00Z`);
-      return {
-        id:       m.id,
-        homeTeam: m.homeTeam || m.homeRef,
-        awayTeam: m.awayTeam || m.awayRef,
-        homeFlag: teamFlag(m.homeTeam || m.homeRef),
-        awayFlag: teamFlag(m.awayTeam || m.awayRef),
-        utcDate:  utcStr,
-        status:   hasScore ? 'FINISHED' : 'SCHEDULED',
-        phase:    zafronixStageToPhase(m.stage),
-        tbd:      !m.homeTeam || /^[WL]\s*\d/.test(m.homeTeam) || /^\d[A-Z]$/.test(m.homeTeam),
-        score:    { home: m.homeScore, away: m.awayScore, pen: m.penalties?.home ?? null, pen2: m.penalties?.away ?? null }
-      };
-    });
-    return fillKnockoutBracket(await fillR32Pairings(matches, backup ? API_CONFIG.ZAFRONIX_KEY_BACKUP : undefined));
-  } catch (e) {
-    console.error("API falló:", e.message);
-    throw e;
-  }
-}
-
-/* ─── Fuente alternativa: ESPN (sin API key) ─── */
 const ESPN_TEAM_MAP = {
   'South Korea':'Korea Republic','Bosnia-Herzegovina':'Bosnia and Herzegovina',
   'Ivory Coast':"Côte d'Ivoire",'Congo DR':'DR Congo','United States':'USA',
-  'Türkiye':'Türkiye','Czechia':'Czech Republic'
+  'Türkiye':'Türkiye','Czechia':'Czech Republic','Cape Verde':'Cabo Verde'
 };
 const ESPN_PHASE_MAP = {
   'group-stage':'Fase de Grupos','round-of-32':'Treintaidosavos','round-of-16':'Octavos de Final',
@@ -2248,96 +1902,125 @@ async function fetchFromESPN() {
     const awayData = competitors.find(c => c.homeAway === 'away') || {};
     const homeName = ESPN_TEAM_MAP[homeData.team?.displayName] || homeData.team?.displayName || 'TBD';
     const awayName = ESPN_TEAM_MAP[awayData.team?.displayName] || awayData.team?.displayName || 'TBD';
-    const isTbd = /^(Round of 16|Quarterfinal|Semifinal) \d/.test(homeName) || /^(Round of 16|Quarterfinal|Semifinal) \d/.test(awayName);
+    const isTbdR = /^(Round of 16|Quarterfinal|Semifinal) \d/;
+    const homeIsTbd = isTbdR.test(homeName);
+    const awayIsTbd = isTbdR.test(awayName);
     const hScore = homeData.score != null ? parseInt(homeData.score) : null;
     const aScore = awayData.score != null ? parseInt(awayData.score) : null;
-    const finished = comp.status?.type?.state === 'post';
-    const inPlay = comp.status?.type?.state === 'in';
+    const state = comp.status?.type?.state || '';
+    const finished = state === 'post' || state === 'completed' || state === 'final';
+    const inPlay = state === 'in';
     const status = finished ? 'FINISHED' : inPlay ? 'IN_PLAY' : 'SCHEDULED';
     const slug = e.season?.slug || 'group-stage';
+    const actualWinner = homeData.winner === true ? homeName : awayData.winner === true ? awayName : null;
     return {
       id:          e.id,
-      homeTeam:    isTbd ? 'TBD' : homeName,
-      awayTeam:    isTbd ? 'TBD' : awayName,
-      homeFlag:    isTbd ? '🏳' : teamFlag(homeName),
-      awayFlag:    isTbd ? '🏳' : teamFlag(awayName),
+      homeTeam:    homeIsTbd ? 'TBD' : homeName,
+      awayTeam:    awayIsTbd ? 'TBD' : awayName,
+      homeFlag:    homeIsTbd ? '🏳' : teamFlag(homeName),
+      awayFlag:    awayIsTbd ? '🏳' : teamFlag(awayName),
       utcDate:     (() => { const d = e.date || comp.date; return d ? (d.endsWith('Z') ? d : d + 'Z') : ''; })(),
       status:      status,
       phase:       ESPN_PHASE_MAP[slug] || 'Fase de Grupos',
-      tbd:         isTbd,
-      score:       { home: hScore, away: aScore, pen: null, pen2: null }
+      tbd:         homeIsTbd || awayIsTbd,
+      score:       { home: hScore, away: aScore, pen: null, pen2: null },
+      winner:      actualWinner
     };
   });
 }
 
-/* ─── Unifica datos desde múltiples fuentes ─── */
-async function syncFromInternet() {
-  const errors = [];
-  /* 1. Intentar ESPN (gratuito, sin key) */
-  try {
-    const espn = await fetchFromESPN();
-    if (espn.length >= 100) return applyScores(espn);
-  } catch(e) { errors.push('ESPN: ' + e.message); }
-  /* 2. Fallback: Zafronix API */
-  try {
-    const api = await fetchFromAPI();
-    if (api.length) return api;
-  } catch(e) { errors.push('API: ' + e.message); }
-  throw new Error('Todas las fuentes fallaron:\n' + errors.join('\n'));
-}
-
-function applyScores(source) {
-  if (!allMatches.length) return source;
-  const norm = n => n?.toLowerCase().replace(/[^a-záéíóúñü0-9]/g,'');
-  let updated = allMatches.map(m => {
-    const espn = source.find(s => norm(m.homeTeam) === norm(s.homeTeam) && norm(m.awayTeam) === norm(s.awayTeam));
-    if (!espn) return m;
-    const updatedDate = espn.utcDate || m.utcDate;
-    const updatedDateOnly = updatedDate !== m.utcDate ? { utcDate: updatedDate } : {};
-    if (espn.status !== 'FINISHED') {
-      const wasFinished = m.status === 'FINISHED';
-      if (wasFinished || updatedDateOnly.utcDate) {
-        return { ...m, ...updatedDateOnly, status: 'SCHEDULED', score: { home: null, away: null, pen: null, pen2: null } };
-      }
-      return m;
-    }
-    if (!espn.score || espn.score.home === null) return { ...m, ...updatedDateOnly, status: 'SCHEDULED', score: { home: null, away: null, pen: null, pen2: null } };
-    const h = espn.score.home, a = espn.score.away;
-    const old = m.score;
-    if (old && old.home === h && old.away === a && m.status === 'FINISHED' && !updatedDateOnly.utcDate) return m;
-    return { ...m, ...updatedDateOnly, score: { home: h, away: a, pen: m.score?.pen ?? null, pen2: m.score?.pen2 ?? null }, status: 'FINISHED' };
-  });
-  /* Fill knockout phases from ESPN when allMatches has only TBD placeholders or is missing the phase.
-     We update existing entries in-place to preserve their original IDs (for predictions). */
-  const koPhases = ['Octavos de Final','Cuartos de Final','Semifinal','Tercer Lugar','Final 🏆'];
-  const teamPair = m => [norm(m.homeTeam), norm(m.awayTeam)].sort().join('|');
-  for (const phase of koPhases) {
-    const local = updated.filter(m => m.phase === phase);
-    const espn = source.filter(s => s.phase === phase && !s.tbd);
-    if (!espn.length) continue;
-    const localReal = local.filter(m => !m.tbd);
-    if (espn.length > localReal.length) {
-      /* Sort TBD by date for consistent matching order */
-      const byDate = (a,b) => (a.utcDate||'').localeCompare(b.utcDate||'');
-      const tbd = local.filter(m => m.tbd).sort(byDate);
-      /* Build pool of unmatched ESPN entries (skip those already matching a real local entry, regardless of home/away order) */
-      const realPairs = new Set(localReal.map(teamPair));
-      let pool = espn.filter(s => !realPairs.has(teamPair(s)));
-      const tbdMap = {};
-      tbd.forEach((m, i) => { if (i < pool.length) tbdMap[m.id] = pool[i]; });
-      updated = updated.map(m => {
-        const s = m.tbd && m.phase === phase ? (tbdMap[m.id] || null) : null;
-        if (!s) return m;
-        return { ...m, homeTeam: s.homeTeam, awayTeam: s.awayTeam, homeFlag: s.homeFlag, awayFlag: s.awayFlag, tbd: false, utcDate: s.utcDate || m.utcDate, score: s.score, status: s.status };
-      });
-      /* Add any remaining unmatched ESPN entries (phase completely missing from allMatches) */
-      const afterPairs = new Set(updated.filter(m => m.phase === phase).map(teamPair));
-      for (const s of pool.slice(tbd.length)) {
-        if (!afterPairs.has(teamPair(s))) updated.push(s);
-      }
+/* ─── Solo ESPN: unifica datos y preserva IDs de pronósticos ─── */
+function resolveBracketPlaceholders(matches, espn) {
+  const byId = {};
+  for (const m of matches) byId[m.id] = m;
+  const memo = {};
+  const win = m => {
+    if (!m || m.status !== 'FINISHED') return null;
+    if (m.winner) return m.winner;
+    const s = m.score || {};
+    if (s.home == null || s.away == null) return null;
+    if (s.home !== s.away) return s.home > s.away ? m.homeTeam : m.awayTeam;
+    if (s.pen != null && s.pen2 != null && s.pen !== s.pen2)
+      return s.pen > s.pen2 ? m.homeTeam : m.awayTeam;
+    return null;
+  };
+  const canon = n => teamFlag(n).normalize();
+  const teamPair = (a, b) => [canon(a), canon(b)].sort().join('|');
+  const winnerByTeams = new Map();
+  if (espn) {
+    for (const m of espn) {
+      const w = win(m);
+      if (w) winnerByTeams.set(teamPair(m.homeTeam, m.awayTeam), w);
     }
   }
-  return updated;
+  /* Find a winner for a referenced match by looking up its teams in ESPN data */
+  const lookupWinner = ref => {
+    if (!ref) return null;
+    const w = win(ref);
+    if (w) return w;
+    return winnerByTeams.get(teamPair(ref.homeTeam, ref.awayTeam)) || null;
+  };
+  const resolve = name => {
+    if (memo[name] !== undefined) return memo[name];
+    const m = /^W(\d+)$/.exec(name);
+    if (m) {
+      const id = '2026-' + m[1].padStart(3,'0');
+      const ref = byId[id];
+      return memo[name] = lookupWinner(ref) || name;
+    }
+    const l = /^L(\d+)$/.exec(name);
+    if (l) {
+      const id = '2026-' + l[1].padStart(3,'0');
+      const ref = byId[id];
+      if (ref) {
+        const w = lookupWinner(ref);
+        if (w) return memo[name] = w === ref.homeTeam ? ref.awayTeam : ref.homeTeam;
+      }
+      return memo[name] = name;
+    }
+    return memo[name] = name;
+  };
+  return matches.map(m => ({
+    ...m,
+    homeTeam: resolve(m.homeTeam),
+    awayTeam: resolve(m.awayTeam)
+  }));
+}
+
+async function syncFromInternet() {
+  const espn = await fetchFromESPN();
+  if (!espn.length) throw new Error('ESPN returned no data');
+  const old = allMatches.length ? allMatches : [];
+  const resolved = resolveBracketPlaceholders(old, espn);
+  const canon = n => teamFlag(n).normalize();
+  const normPhase = p => /^Grupo\s/i.test(p) ? 'Fase de Grupos' : p;
+  const matchKey = m => normPhase(m.phase) + '|' + [canon(m.homeTeam), canon(m.awayTeam)].sort().join('|');
+  const existingIds = new Map(), altIds = new Map();
+  for (const m of resolved) {
+    const k = matchKey(m);
+    if (!existingIds.has(k)) {
+      existingIds.set(k, m.id);
+    } else {
+      if (!altIds.has(k)) altIds.set(k, []);
+      altIds.get(k).push(m.id);
+    }
+  }
+  const allAltIds = new Map();
+  for (const [k, ids] of altIds) {
+    const target = existingIds.get(k);
+    for (const id of ids) {
+      if (!allAltIds.has(target)) allAltIds.set(target, []);
+      allAltIds.get(target).push(id);
+    }
+  }
+  return espn.map(s => {
+    const k = matchKey(s);
+    const id = existingIds.get(k) || s.id;
+    const alts = allAltIds.get(id) || [];
+    const merged = { ...s, id };
+    if (alts.length) merged.altIds = [...new Set(alts)];
+    return merged;
+  });
 }
 
 function cacheMatches() {
@@ -2698,7 +2381,7 @@ function buildRanking(allProns) {
   for (const [emailKey, prons] of Object.entries(allProns)) {
     let pts = 0, exact = 0, winner = 0, total = 0;
     for (const [matchId, pron] of Object.entries(prons)) {
-      const m = allMatches.find(x => x.id === matchId);
+      const m = allMatches.find(x => x.id === matchId || (x.altIds && x.altIds.includes(matchId)));
       if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
       const p = calcPoints(pron, m.score, m);
       pts += scoringValue(p);
@@ -2778,8 +2461,8 @@ function updateMyStats(ranking) {
 function computeMyStats() {
   if (!allMatches.length || !currentUser) return;
   let pts = 0, exact = 0, total = 0;
-  for (const [matchId, pron] of Object.entries(myPronosticos)) {
-    const m = allMatches.find(x => x.id === matchId);
+    for (const [matchId, pron] of Object.entries(myPronosticos)) {
+      const m = allMatches.find(x => x.id === matchId || (x.altIds && x.altIds.includes(matchId)));
     if (!m || m.status !== 'FINISHED' || !m.score || m.score.home === null) continue;
     const p = calcPoints(pron, m.score, m);
     pts += scoringValue(p);
@@ -2833,7 +2516,7 @@ function computeStats(allProns) {
   for (const prons of Object.values(allProns)) {
     for (const [mid, p] of Object.entries(prons)) {
       totalProns++;
-      const m = allMatches.find(x=>x.id===mid);
+      const m = allMatches.find(x=>x.id===mid||(x.altIds&&x.altIds.includes(mid)));
       if (m&&m.status==='FINISHED'&&m.score&&m.score.home!==null) {
         const pp = calcPoints(p,m.score,m);
         if (pp === SCORING.GROUP_EXACT || pp === SCORING.KO_EXACT_QUAL || pp === SCORING.KO_EXACT_MISS) exactTotal++;
@@ -2896,7 +2579,7 @@ async function adminForceSync() {
       allMatches = fresh;
       cacheMatches();
       if (db) {
-        await db.ref('matches').set({ data: fresh, updated: new Date().toISOString() });
+        await db.ref('matches').set({ data: allMatches, updated: new Date().toISOString() });
       }
       renderMatches();
       renderPhaseTabs();
@@ -3040,7 +2723,7 @@ function adminExportCSV() {
       for (const [emailKey, prons] of Object.entries(allProns)) {
         const user = allUsers[emailKey] || { name: emailKey };
         for (const [matchId, pron] of Object.entries(prons)) {
-          const m = allMatches.find(x => x.id === matchId);
+          const m = allMatches.find(x => x.id === matchId || (x.altIds && x.altIds.includes(matchId)));
           if (!m) continue;
           const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? scoringValue(calcPoints(pron,m.score,m)) : '—';
           const result = (m.score&&m.score.home!==null) ? `${m.score.home}-${m.score.away}` : '—';
@@ -3122,7 +2805,7 @@ function renderAdminPage() {
     for (const [emailKey, prons] of Object.entries(allProns)) {
       const user = allUsers[emailKey] || { name: emailKey };
       for (const [matchId, pron] of Object.entries(prons)) {
-        const m = allMatches.find(x=>x.id===matchId);
+        const m = allMatches.find(x=>x.id===matchId||(x.altIds&&x.altIds.includes(matchId)));
         if (!m) continue;
         const pts = (m.status==='FINISHED'&&m.score&&m.score.home!==null) ? scoringValue(calcPoints(pron,m.score,m)) : '—';
         const result = m.score&&m.score.home!==null ? `${m.score.home}–${m.score.away}` : '—';
@@ -3211,6 +2894,7 @@ async function toggleActivo(emailKey, activo) {
 
 function matchWinner(m) {
   if (!m || m.status !== 'FINISHED' || m.score.home === null) return null;
+  if (m.winner) return m.winner;
   if (m.score.home !== m.score.away) return m.score.home > m.score.away ? m.homeTeam : m.awayTeam;
   if (m.score.pen != null && m.score.pen2 != null && m.score.pen !== m.score.pen2)
     return m.score.pen > m.score.pen2 ? m.homeTeam : m.awayTeam;
@@ -3340,7 +3024,7 @@ function teamFlag(name) {
     'Uruguay':'🇺🇾','Chile':'🇨🇱','Peru':'🇵🇪','Perú':'🇵🇪','Venezuela':'🇻🇪',
     'Saudi Arabia':'🇸🇦','Arabia Saudita':'🇸🇦','Australia':'🇦🇺',
     'Poland':'🇵🇱','Polonia':'🇵🇱','Serbia':'🇷🇸','Senegal':'🇸🇳',
-    'Cameroon':'🇨🇲','Camerún':'🇨🇲','Cabo Verde':'🇨🇻','Tunisia':'🇹🇳','Túnez':'🇹🇳',
+    'Cameroon':'🇨🇲','Camerún':'🇨🇲','Cabo Verde':'🇨🇻','Cape Verde':'🇨🇻','Tunisia':'🇹🇳','Túnez':'🇹🇳',
     'Ghana':'🇬🇭','Iran':'🇮🇷','IR Iran':'🇮🇷','Irán':'🇮🇷','Wales':'🏴󠁧󠁢󠁷󠁬󠁳󠁿','Gales':'🏴󠁧󠁢󠁷󠁬󠁳󠁿',
     'Costa Rica':'🇨🇷','Qatar':'🇶🇦','Panama':'🇵🇦','Panamá':'🇵🇦',
     'Jamaica':'🇯🇲','Honduras':'🇭🇳','El Salvador':'🇸🇻',
@@ -3363,7 +3047,7 @@ function teamFlag(name) {
     'Iceland':'🇮🇸','Islandia':'🇮🇸','Czech Republic':'🇨🇿','Chequia':'🇨🇿',
     'Czechia':'🇨🇿','Slovakia':'🇸🇰','Eslovaquia':'🇸🇰','Romania':'🇷🇴','Rumania':'🇷🇴',
     'Bulgaria':'🇧🇬','Finland':'🇫🇮','Finlandia':'🇫🇮','Russia':'🇷🇺','Rusia':'🇷🇺',
-    'Montenegro':'🇲🇪','Bosnia':'🇧🇦','Bosnia and Herzegovina':'🇧🇦',
+    'Montenegro':'🇲🇪','Bosnia':'🇧🇦','Bosnia and Herzegovina':'🇧🇦','Bosnia-Herzegovina':'🇧🇦',
     'North Macedonia':'🇲🇰','Macedonia del Norte':'🇲🇰','Albania':'🇦🇱',
     'Georgia':'🇬🇪','Armenia':'🇦🇲','Israel':'🇮🇱','Cyprus':'🇨🇾','Chipre':'🇨🇾',
     'Slovenia':'🇸🇮','Eslovenia':'🇸🇮','Kosovo':'🇽🇰','Belarus':'🇧🇾','Bielorrusia':'🇧🇾',
